@@ -1,0 +1,130 @@
+name: Windows installer
+
+# Builds the SprayGCS Windows installer (64-bit).
+# Runs only when asked, so ordinary pushes don't use up build minutes:
+# - Pushing a version tag (e.g. v1.0.1) builds it and publishes a GitHub Release
+#   with the installer attached.
+# - "Run workflow" on the Actions tab builds the current code; the installer is
+#   attached to that run as a downloadable artifact.
+
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+']
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  AQT_SOURCE: 'git+https://github.com/miurahr/aqtinstall.git@8d961e61720b3c06583517fbc68d57ec0a4e9f95'
+  BUILD_TYPE: Release
+  PACKAGE: SprayGCS-installer-AMD64
+
+jobs:
+  build:
+    name: Build Windows x64 installer
+    runs-on: windows-2022
+    timeout-minutes: 180
+
+    permissions:
+      contents: write   # to publish a Release on version tags
+
+    defaults:
+      run:
+        shell: cmd
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v7
+        with:
+          # The version number comes from git describe, which needs the tags.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Build Setup
+        id: build-setup
+        uses: ./.github/actions/build-setup
+        with:
+          qt-host: windows
+          qt-arch: win64_msvc2022_64
+          aqt-source: ${{ env.AQT_SOURCE }}
+          build-type: ${{ env.BUILD_TYPE }}
+
+      - name: Configure
+        uses: ./.github/actions/cmake-configure
+        with:
+          build-dir: ${{ runner.temp }}/build
+          build-type: ${{ env.BUILD_TYPE }}
+          preset: Windows
+          extra-args: >-
+            -DQGC_BUILD_PORTABLE_TESTS=OFF
+            -DQGC_ENABLE_GST_VIDEOSTREAMING=ON
+            -DQGC_CPACK_GENERATOR=NSIS
+
+      - name: Resolve GStreamer root
+        id: gst-root
+        shell: bash
+        run: |
+          python3 "${GITHUB_WORKSPACE}/.github/scripts/cmake_helper.py" cache-var \
+            --build-dir "${RUNNER_TEMP}/build" \
+            --name GStreamer_ROOT_DIR \
+            --required \
+            --output-key gst_root
+
+      - name: Add GStreamer to PATH
+        shell: bash
+        run: echo "${GST_ROOT}/bin" >> "$GITHUB_PATH"
+        env:
+          GST_ROOT: ${{ steps.gst-root.outputs.gst_root }}
+
+      - name: Build
+        uses: ./.github/actions/cmake-build
+        with:
+          build-dir: ${{ runner.temp }}/build
+          build-type: ${{ env.BUILD_TYPE }}
+
+      - name: Check the app starts
+        uses: ./.github/actions/verify-executable
+        with:
+          binary-path: ${{ runner.temp }}/build/${{ env.BUILD_TYPE }}/SprayGCS.exe
+          type: exe
+          build-dir: ${{ runner.temp }}/build
+
+      - name: Create Installer
+        uses: ./.github/actions/cmake-build
+        with:
+          build-dir: ${{ runner.temp }}\build
+          build-type: ${{ env.BUILD_TYPE }}
+          target: qgc-package
+          parallel: 'false'
+
+      - name: Find installer
+        id: installer
+        shell: pwsh
+        run: |
+          $path = Join-Path $env:RUNNER_TEMP "build\$env:PACKAGE.exe"
+          if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+            Get-ChildItem (Join-Path $env:RUNNER_TEMP 'build') -Filter *.exe | Format-Table Name, Length
+            Write-Error "Installer not found: $path"
+            exit 1
+          }
+          "path=$path" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.PACKAGE }}
+          path: ${{ steps.installer.outputs.path }}
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.installer.outputs.path }}
+          generate_release_notes: true

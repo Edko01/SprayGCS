@@ -1,0 +1,111 @@
+{
+    "version":      1,
+    "fileType":  "FactMetaData",
+    "QGC.MetaData.Facts":
+[
+{
+    "name":             "SwathWidth",
+    "shortDesc":        "Effective spray width of one pass. Passes are spaced this far apart.",
+    "type":             "double",
+    "units":            "m",
+    "decimalPlaces":    1,
+    "min":              1,
+    "max":              152.4,
+    "default":          6
+},
+{
+    "name":             "PassAngle",
+    "shortDesc":        "Direction the passes run, in degrees clockwise from north.",
+    "type":             "double",
+    "units":            "deg",
+    "decimalPlaces":    0,
+    "min":              0,
+    "max":              359.9,
+    "default":          0
+},
+{
+    "name":             "PassOffset",
+    "shortDesc":        "Slides the passes sideways, at 90 degrees to the pass angle (+ is to the right of the pass direction). The passes are refitted inside the buffer.",
+    "type":             "double",
+    "units":            "m",
+    "decimalPlaces":    1,
+    "min":              -76.2,
+    "max":              76.2,
+    "default":          0
+},
+{
+    "name":             "Altitude",
+    "shortDesc":        "Spray height above the takeoff point.",
+    "type":             "double",
+    "units":            "vertical m",
+    "decimalPlaces":    1,
+    "min":              1,
+    "max":              45.72,
+    "default":          3
+},
+{
+    "name":             "Speed",
+    "shortDesc":        "Ground speed while spraying.",
+    "type":             "double",
+    "units":            "m/s",
+    "decimalPlaces":    1,
+    "min":              0.5,
+    "max":              22.352,
+    "default":          5
+},
+{
+    "name":             "ApplicationRate",
+    "shortDesc":        "Target application rate, sent to the onboard spray app.",
+    "type":             "double",
+    "units":            "gal/ac",
+    "decimalPlaces":    2,
+    "min":              0,
+    "max":              20,
+    "default":          2
+},
+{
+    "name":             "EdgeMargin",
+    "shortDesc":        "Buffer kept inside the field boundary on every side without its own buffer. Nothing is sprayed in this strip. At least 3 ft.",
+    "type":             "double",
+    "units":            "m",
+    "decimalPlaces":    2,
+    "min":              0.9144,
+    "max":              50,
+    "default":          1
+},
+{
+    "name":             "TransitMode",
+    "shortDesc":        "How the drone gets from takeoff to the field and back. A: straight to the entry side of the field. B: along a planned route.",
+    "type":             "uint32",
+    "enumStrings":      "A - Entry side,B - Planned route",
+    "enumValues":       "0,1",
+    "default":          0
+},
+{
+    "name":             "TransitAltitude",
+    "shortDesc":        "Height above ground for flying to and from the field.",
+    "type":             "double",
+    "units":            "vertical m",
+    "decimalPlaces":    1,
+    "min":              2,
+    "max":              100,
+    "default":          10
+},
+{
+    "name":             "TransitSpeed",
+    "shortDesc":        "Ground speed for flying to and from the field.",
+    "type":             "double",
+    "units":            "m/s",
+    "decimalPlaces":    1,
+    "min":              1,
+    "max":              22.352,
+    "default":          7
+},
+{
+    "name":             "HeadlandPass",
+    "shortDesc":        "Fly one pass around the edge of the spray area after the straight passes.",
+    "type":             "bool",
+    "default":          true
+}
+]
+}

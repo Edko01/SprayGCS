@@ -1,0 +1,102 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard",
+    ":enablePreCommit",
+    ":semanticCommitTypeAll(deps)"
+  ],
+  "labels": [
+    "dependencies"
+  ],
+  "ignorePaths": [
+    ".github/workflows/**"
+  ],
+  "description": "Manages npm, Python, pre-commit, development environments, Gradle dependencies and Wrapper, Node versions, Dockerfiles, and composite actions. Dependabot owns .github/workflows, which are excluded here.",
+  "enabledManagers": [
+    "devcontainer",
+    "dockerfile",
+    "github-actions",
+    "gradle-wrapper",
+    "npm",
+    "pep621",
+    "pre-commit",
+    "gradle",
+    "nvm"
+  ],
+  "packageRules": [
+    {
+      "description": "Auto-merge patch updates after CI passes",
+      "matchManagers": [
+        "npm",
+        "pep621",
+        "pre-commit"
+      ],
+      "matchUpdateTypes": [
+        "patch"
+      ],
+      "automerge": true
+    },
+    {
+      "description": "Combine npm, python, and pre-commit updates into a single PR",
+      "groupName": "all dependencies",
+      "matchManagers": [
+        "npm",
+        "pep621",
+        "pre-commit"
+      ],
+      "schedule": [
+        "before 6am on monday"
+      ]
+    },
+    {
+      "description": "Group composite GitHub Action updates not covered by Dependabot",
+      "groupName": "composite action dependencies",
+      "matchManagers": [
+        "github-actions"
+      ]
+    },
+    {
+      "description": "Group development environment and build bootstrap updates",
+      "groupName": "development environment dependencies",
+      "matchManagers": [
+        "devcontainer",
+        "dockerfile",
+        "gradle-wrapper"
+      ]
+    },
+    {
+      "description": "Keep formatter and Python lint tool pins synchronized",
+      "matchPackageNames": [
+        "clang-format",
+        "pre-commit/mirrors-clang-format",
+        "ruff",
+        "astral-sh/ruff-pre-commit",
+        "pyright",
+        "RobertCraigie/pyright-python"
+      ],
+      "groupName": "code quality tools"
+    }
+  ],
+  "prConcurrentLimit": 5,
+  "prHourlyLimit": 2,
+  "schedule": [
+    "before 6am on monday"
+  ],
+  "timezone": "UTC",
+  "vulnerabilityAlerts": {
+    "labels": [
+      "security",
+      "priority"
+    ],
+    "schedule": [
+      "at any time"
+    ]
+  },
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": [
+      "before 6am on monday"
+    ]
+  }
+}

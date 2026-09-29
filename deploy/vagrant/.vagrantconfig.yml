@@ -1,0 +1,5 @@
+# Qt version and modules come from .github/build-config.json.
+configs:
+    dev:
+        qt_deps_unpack_dir: /home/vagrant/Qt
+        project_root_dir: /vagrant

@@ -1,0 +1,52 @@
+{
+  "version": 6,
+  "include": ["common.json"],
+  "configurePresets": [
+    {
+      "name": "android-base",
+      "hidden": true,
+      "generator": "Ninja",
+      "inherits": ["ccache"],
+      "toolchainFile": "$penv{QT_TARGET_ROOT_DIR}/lib/cmake/Qt6/qt.toolchain.cmake",
+      "cacheVariables": {
+        "CMAKE_SYSTEM_VERSION": "$penv{ANDROID_MIN_SDK}",
+        "ANDROID_NDK": "$penv{ANDROID_NDK}",
+        "CMAKE_PREFIX_PATH": "$penv{QT_TARGET_ROOT_DIR}",
+        "QGC_CPACK_GENERATOR": "",
+        "QT_HOST_PATH": "$penv{QT_HOST_PATH}"
+      }
+    },
+    {
+      "name": "Android",
+      "displayName": "Android Release",
+      "inherits": ["release", "android-base"],
+      "binaryDir": "${sourceDir}/build/Android"
+    },
+    {
+      "name": "Android-debug",
+      "displayName": "Android Debug",
+      "inherits": ["debug-no-tests", "android-base"],
+      "binaryDir": "${sourceDir}/build/Android-debug"
+    }
+  ],
+  "buildPresets": [
+    { "name": "Android", "configurePreset": "Android", "inherits": ["build-defaults"] },
+    { "name": "Android-debug", "configurePreset": "Android-debug", "inherits": ["build-defaults"] }
+  ],
+  "workflowPresets": [
+    {
+      "name": "Android",
+      "steps": [
+        { "type": "configure", "name": "Android" },
+        { "type": "build", "name": "Android" }
+      ]
+    },
+    {
+      "name": "Android-debug",
+      "steps": [
+        { "type": "configure", "name": "Android-debug" },
+        { "type": "build", "name": "Android-debug" }
+      ]
+    }
+  ]
+}

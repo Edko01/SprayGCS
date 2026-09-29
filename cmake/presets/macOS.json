@@ -1,0 +1,57 @@
+{
+  "version": 6,
+  "include": ["common.json"],
+  "configurePresets": [
+    {
+      "name": "macos-base",
+      "hidden": true,
+      "generator": "Ninja",
+      "inherits": ["ccache"],
+      "toolchainFile": "$penv{QT_ROOT_DIR}/lib/cmake/Qt6/qt.toolchain.cmake",
+      "cacheVariables": {
+        "QGC_MACOS_UNIVERSAL_BUILD": "OFF"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      }
+    },
+    {
+      "name": "macOS",
+      "displayName": "macOS Release",
+      "inherits": ["release", "macos-base"],
+      "binaryDir": "${sourceDir}/build/macOS"
+    },
+    {
+      "name": "macOS-debug",
+      "displayName": "macOS Debug",
+      "inherits": ["debug", "macos-base"],
+      "binaryDir": "${sourceDir}/build/macOS-debug"
+    }
+  ],
+  "buildPresets": [
+    { "name": "macOS", "configurePreset": "macOS", "inherits": ["build-defaults"] },
+    { "name": "macOS-debug", "configurePreset": "macOS-debug", "inherits": ["build-defaults"] }
+  ],
+  "testPresets": [
+    { "name": "macOS-debug", "configurePreset": "macOS-debug", "inherits": ["test-defaults"] }
+  ],
+  "workflowPresets": [
+    {
+      "name": "macOS",
+      "steps": [
+        { "type": "configure", "name": "macOS" },
+        { "type": "build", "name": "macOS" }
+      ]
+    },
+    {
+      "name": "macOS-debug",
+      "steps": [
+        { "type": "configure", "name": "macOS-debug" },
+        { "type": "build", "name": "macOS-debug" },
+        { "type": "test", "name": "macOS-debug" }
+      ]
+    }
+  ]
+}

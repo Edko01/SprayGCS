@@ -1,0 +1,67 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+require 'yaml'
+
+current_dir    = File.dirname(File.expand_path(__FILE__))
+configfile     = YAML.load_file("#{current_dir}/.vagrantconfig.yml")
+yaml_config    = configfile['configs']['dev']
+
+# CI uses a writable guest copy; desktop users share the repository directly.
+ci_mode = !ENV.fetch('QGC_CI', '').empty?
+
+Vagrant.configure(2) do |config|
+  # This trick is used to prefer a VM box over docker
+  config.vm.provider "virtualbox"
+  config.vm.provider "vmware_fusion"
+
+  config.vm.box = "alvistack/ubuntu-25.10"
+  if ci_mode
+    # rsync (not 9p): the guest needs a writable, vagrant-owned copy — QGC's cmake
+    # generates files inside the source tree, impossible on a foreign-uid 9p share.
+    config.vm.synced_folder "../..", "/vagrant", type: "rsync",
+      rsync__exclude: ["shadow_build/", ".venv/", "build/"]
+  else
+    config.vm.synced_folder "../..", "/vagrant"
+  end
+  config.vm.provider :docker do |docker, override|
+    override.vm.box = "tknerr/baseimage-ubuntu-16.04"
+  end
+  config.vm.provider :virtualbox do |vb|
+    vb.customize ["modifyvm", :id, "--memory", "6144"]
+    vb.customize ["modifyvm", :id, "--cpus", "1"]
+    vb.gui = true
+  end
+  # libvirt/KVM provider: the only way to run a real `vagrant up` build on a
+  # GitHub-hosted runner (VirtualBox has no nested-virt there). Headless.
+  config.vm.provider :libvirt do |lv|
+    lv.memory = Integer(ENV.fetch('QGC_VM_MEM_MB', '8192'))
+    lv.cpus   = Integer(ENV.fetch('QGC_VM_CPUS', '4'))
+  end
+  ["vmware_fusion", "vmware_workstation"].each do |p|
+    config.vm.provider p do |v|
+      v.vmx["memsize"] = "6144"
+      v.vmx["numvcpus"] = "1"
+      v.gui = true
+    end
+  end
+  if Vagrant.has_plugin?("vagrant-cachier")
+    config.cache.scope = :box
+    config.cache.synced_folder_opts = {
+      owner: "_apt"
+    }
+  end
+
+  config.vm.provision "dev", type: "shell", env: {
+    "QGC_CI" => ENV.fetch('QGC_CI', ''),
+    "QGC_SOURCE_DIR" => yaml_config.fetch('project_root_dir'),
+    "QT_OUT" => yaml_config.fetch('qt_deps_unpack_dir'),
+  }, inline: <<-'SHELL'
+    set -eu
+    if ! command -v python3 >/dev/null 2>&1; then
+      apt-get update
+      DEBIAN_FRONTEND=noninteractive apt-get install -y python3
+    fi
+    exec python3 "$QGC_SOURCE_DIR/deploy/vagrant/provision.py"
+  SHELL
+end
