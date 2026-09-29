@@ -191,8 +191,11 @@ TreeView {
     // Called by MissionItemEditor delegates when their editor height has settled.
     function _scrollToMissionItem(delegateItem) {
         root.forceLayout()
-        var bottomY = delegateItem.mapToItem(root.contentItem, 0, delegateItem.height).y
-        var neededContentY = bottomY - root.height
+        var topY = delegateItem.mapToItem(root.contentItem, 0, 0).y
+        var bottomY = topY + delegateItem.height
+        // SprayGCS: bring the bottom into view, but never scroll the item's own top
+        // (its title and Done buttons) out of view when it's taller than the panel.
+        var neededContentY = Math.min(bottomY - root.height, topY)
         if (neededContentY > root.contentY) {
             root.contentY = neededContentY
         }

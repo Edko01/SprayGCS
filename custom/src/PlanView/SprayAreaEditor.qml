@@ -104,6 +104,8 @@ Rectangle {
         }
 
         // ---- edit boundary ------------------------------------------------------
+        // While the boundary is drawn or edited only this section shows, so its
+        // Done button stays in view; the settings come back on Done.
         // The boundary tools only work in this mode, so taps meant for other
         // edits can't move or retrace the boundary.
         Rectangle {
@@ -141,7 +143,7 @@ Rectangle {
             implicitHeight:   _rowHeight
             radius:           _radius
             color:            missionItem.routeEditMode ? _accent : qgcPal.windowShade
-            visible:          missionItem.pathValid || missionItem.routeEditMode
+            visible:          (missionItem.pathValid || missionItem.routeEditMode) && !missionItem.boundaryEditMode
 
             QGCLabel {
                 anchors.centerIn: parent
@@ -164,7 +166,7 @@ Rectangle {
                                    "\u2022 Press and hold on a section, then drag, to add a point.\n" +
                                    "\u2022 Drag a point to move it. Tap it to delete it.\n" +
                                    "\u2022 Drag anywhere else to move the map.")
-            visible:          missionItem.routeEditMode && missionItem.pathValid
+            visible:          missionItem.routeEditMode && missionItem.pathValid && !missionItem.boundaryEditMode
         }
 
         // ---- side buffers ---------------------------------------------------------
@@ -173,7 +175,7 @@ Rectangle {
             implicitHeight:   _rowHeight
             radius:           _radius
             color:            missionItem.sideEditMode ? _sideColor : qgcPal.windowShade
-            visible:          missionItem.fieldPolygon.isValid || missionItem.sideEditMode
+            visible:          (missionItem.fieldPolygon.isValid || missionItem.sideEditMode) && !missionItem.boundaryEditMode
 
             QGCLabel {
                 anchors.centerIn: parent
@@ -196,13 +198,13 @@ Rectangle {
             wrapMode:         Text.WordWrap
             text:             qsTr("Tap a side's number on the map to give it its own buffer. All other sides use the uniform buffer (%1).")
                                   .arg(missionItem.edgeMargin.valueString + " " + missionItem.edgeMargin.units)
-            visible:          missionItem.sideEditMode
+            visible:          missionItem.sideEditMode && !missionItem.boundaryEditMode
         }
 
         ColumnLayout {
             Layout.fillWidth: true
             spacing:          _margin / 2
-            visible:          missionItem.sideEditMode || missionItem.customSideCount > 0
+            visible:          (missionItem.sideEditMode || missionItem.customSideCount > 0) && !missionItem.boundaryEditMode
 
             Repeater {
                 model: missionItem.sides
@@ -291,7 +293,7 @@ Rectangle {
             text:             missionItem.outsideCount === 1
                               ? qsTr("1 section (red) leaves the field boundary.")
                               : qsTr("%1 sections (red) leave the field boundary.").arg(missionItem.outsideCount)
-            visible:          missionItem.pathValid && missionItem.outsideCount > 0
+            visible:          missionItem.pathValid && missionItem.outsideCount > 0 && !missionItem.boundaryEditMode
         }
 
         QGCLabel {
@@ -299,14 +301,14 @@ Rectangle {
             wrapMode:         Text.WordWrap
             color:            qgcPal.warningText
             text:             qsTr("The passes were regenerated, so route edits were reset. Undo brings them back.")
-            visible:          missionItem.routeEditsWereReset
+            visible:          missionItem.routeEditsWereReset && !missionItem.boundaryEditMode
         }
 
         // ---- tabs ---------------------------------------------------------------
         RowLayout {
             Layout.fillWidth: true
             spacing:          _margin / 2
-            visible:          missionItem.fieldPolygon.isValid
+            visible:          missionItem.fieldPolygon.isValid && !missionItem.boundaryEditMode
 
             Repeater {
                 model: [ { tab: "basic",    text: qsTr("Basic") },
@@ -338,7 +340,7 @@ Rectangle {
         ColumnLayout {
             Layout.fillWidth: true
             spacing:          0
-            visible:          missionItem.fieldPolygon.isValid && _tab === "basic"
+            visible:          missionItem.fieldPolygon.isValid && _tab === "basic" && !missionItem.boundaryEditMode
 
             // One row per setting: name and value box, then a slider (XAG-style).
             // The slider shows its value while dragging and applies it on release,
@@ -588,7 +590,7 @@ Rectangle {
         ColumnLayout {
             Layout.fillWidth: true
             spacing:          _margin / 2
-            visible:          missionItem.fieldPolygon.isValid && _tab === "transit"
+            visible:          missionItem.fieldPolygon.isValid && _tab === "transit" && !missionItem.boundaryEditMode
 
             QGCLabel {
                 Layout.fillWidth: true
@@ -858,7 +860,7 @@ Rectangle {
         ColumnLayout {
             Layout.fillWidth: true
             spacing:          0
-            visible:          missionItem.fieldPolygon.isValid && _tab === "advanced"
+            visible:          missionItem.fieldPolygon.isValid && _tab === "advanced" && !missionItem.boundaryEditMode
 
             Item {
                 Layout.fillWidth: true
