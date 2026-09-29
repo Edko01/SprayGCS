@@ -6,7 +6,7 @@ built as a custom version of QGroundControl. The upstream QGroundControl readme 
 - **Install on Windows:** download `SprayGCS-installer-AMD64.exe` from the latest
   [release](https://github.com/Edko01/SprayGCS/releases/latest) and run it. The installer isn't
   code-signed, so Windows may say "Windows protected your PC": click **More info**, then **Run anyway**.
-- **New release:** change the number in `custom/VERSION` (e.g. `1.0.1`) and push to `main`. Every push
+- **New release:** change the number in `custom/spraygcs-version.txt` (e.g. `1.0.1`) and push to `main`. Every push
   to `main` builds the installer (Actions tab); a new version number also publishes a release.
 - SprayGCS code lives in `custom/`, with a few edits to QGroundControl files under `src/`.
 

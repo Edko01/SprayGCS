@@ -3,7 +3,7 @@ name: Windows installer
 # Builds the SprayGCS Windows installer (64-bit) on every push to main, and on
 # demand from the Actions tab ("Run workflow").
 # - Every build attaches the installer to its run (Summary -> Artifacts).
-# - When custom/VERSION holds a version that has no release yet, the build also
+# - When custom/spraygcs-version.txt holds a version that has no release yet, the build also
 #   publishes a GitHub Release "SprayGCS <version>" with the installer, and tags it.
 
 on:
@@ -51,9 +51,9 @@ jobs:
         id: version
         shell: bash
         run: |
-          version="$(tr -d ' \r\n' < custom/VERSION)"
+          version="$(tr -d ' \r\n' < custom/spraygcs-version.txt)"
           if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::custom/VERSION must look like 1.2.3 (got '$version')"
+            echo "::error::custom/spraygcs-version.txt must look like 1.2.3 (got '$version')"
             exit 1
           fi
           tag="v$version"
