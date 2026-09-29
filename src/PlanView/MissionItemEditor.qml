@@ -62,7 +62,9 @@ Rectangle {
             editorLoader.sourceComponent = undefined
             editorLoader.setSource(missionItem.editorQml, {
                 missionItem:    _root.missionItem,
-                availableWidth: _root.width - (editorLoader.anchors.margins * 2)
+                // A binding, not a snapshot: the panel width changes with the window
+                // size and the display scale after the editor has loaded.
+                availableWidth: Qt.binding(() => _root.width - (editorLoader.anchors.margins * 2))
             })
         } else {
             editorLoader.sourceComponent = undefined
