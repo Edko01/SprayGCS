@@ -1,0 +1,57 @@
+#pragma once
+
+#include <memory>
+
+#include "MissionControllerManagerTest.h"
+#include "UnitTest.h"
+
+class MissionController;
+class PlanMasterController;
+class VisualMissionItem;
+
+class MissionControllerTest : public MissionControllerManagerTest
+{
+    Q_OBJECT
+
+public:
+    ~MissionControllerTest() override;
+
+private slots:
+    void cleanup() override;
+
+    void _testLoadJsonSectionAvailable();
+    void _testGlobalAltFrame();
+    void _testFlightPathSegmentCacheReuse();
+    void _testGimbalRecalc();
+    void _testVehicleYawRecalc();
+    void _testMissionReposition();
+    void _testMissionOffset();
+    void _testMissionRotate();
+    void _testMissionTransformsInvalidHome();
+    void _testLoadPlanRoundTripComplexItems();
+    void _testInsertSurveyAppliesAltFrameInMixedMode();
+    void _testInsertNonSurveyComplexItemMixedModeNoCrash();
+    void _testInsertComplexItemFromKML();
+    void _testInsertValidityHomePositionGating();
+    void _testLandToolInsertsSingleRtl_data();
+    void _testLandToolInsertsSingleRtl();
+    void _testVTOLTakeoffModes_data();
+    void _testVTOLTakeoffModes();
+    void _testArduPilotVTOLOrdinaryTakeoffCompatibility();
+    void _testUnsupportedVTOLMulticopterTakeoff();
+    void _testVTOLMulticopterTakeoffAfterFixedWingTransition();
+    void _testVTOLTakeoffJsonRoundTrip_data();
+    void _testVTOLTakeoffJsonRoundTrip();
+
+    // Parameterized tests - runs once per autopilot type
+    UT_PARAMETERIZED_TEST(_testEmptyVehicle);
+
+private:
+    void _initForFirmwareType(MAV_AUTOPILOT firmwareType);
+    void _initForVehicleType(MAV_AUTOPILOT firmwareType, MAV_TYPE vehicleType);
+    void _startMasterController();
+    void _setupVisualItemSignals(VisualMissionItem* visualItem);
+
+    std::unique_ptr<PlanMasterController> _masterController;
+    MissionController* _missionController = nullptr;
+};
