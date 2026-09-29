@@ -150,6 +150,44 @@ jobs:
           }
           "path=$path" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
+      # Installs the way a user updates: fresh install, the same installer again
+      # over it (upgrade in place), then into another folder, then uninstall.
+      - name: Test install, upgrade and uninstall
+        shell: pwsh
+        env:
+          INSTALLER_PATH: ${{ steps.installer.outputs.path }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installer = $env:INSTALLER_PATH
+          $dirA = Join-Path $env:RUNNER_TEMP 'SprayGCS-A'
+          $dirB = Join-Path $env:RUNNER_TEMP 'SprayGCS-B'
+          function Install-To($dir) {
+            $p = Start-Process -FilePath $installer -ArgumentList '/S', "/D=$dir" -Wait -PassThru -NoNewWindow
+            if ($p.ExitCode -ne 0) { throw "Installer exited with $($p.ExitCode) for $dir" }
+          }
+          function Assert-App($dir, $when) {
+            $exe = Join-Path $dir 'bin\SprayGCS.exe'
+            if (-not (Test-Path -LiteralPath $exe)) {
+              Get-ChildItem -LiteralPath $dir -Recurse -ErrorAction SilentlyContinue | Select-Object -First 20 FullName
+              throw "SprayGCS.exe missing after $when ($exe)"
+            }
+            Write-Host "OK after ${when}: $exe"
+          }
+
+          Install-To $dirA; Assert-App $dirA 'fresh install'
+          Install-To $dirA; Assert-App $dirA 'upgrade in the same folder'
+          Install-To $dirB; Assert-App $dirB 'upgrade into another folder'
+          if (Test-Path -LiteralPath (Join-Path $dirA 'bin\SprayGCS.exe')) {
+            throw 'The previous folder was not removed after upgrading into another folder'
+          }
+
+          $uninstaller = Join-Path $dirB 'SprayGCS-Uninstall.exe'
+          Start-Process -FilePath $uninstaller -ArgumentList '/S', "_?=$dirB" -Wait -NoNewWindow
+          if (Test-Path -LiteralPath (Join-Path $dirB 'bin\SprayGCS.exe')) {
+            throw 'SprayGCS.exe still there after uninstall'
+          }
+          Write-Host 'Install, upgrade and uninstall all OK'
+
       - name: Upload installer
         uses: actions/upload-artifact@v7
         with:

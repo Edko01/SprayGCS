@@ -89,6 +89,16 @@ qgc_use_uninstaller_parent:
     GetFullPathName $R3 "$R1\.."
 
 qgc_have_previous_install_dir:
+    ; CPack runs the component sections, which copy the new files, before this
+    ; core section. Running the old uninstaller on the same folder would delete
+    ; the files just installed, so an upgrade in place only overwrites.
+    GetFullPathName $R4 "$R3"
+    GetFullPathName $R5 "$INSTDIR"
+    StrCmp $R4 $R5 0 qgc_run_previous_uninstaller
+    DetailPrint "Upgrading @CMAKE_PROJECT_NAME@ in place"
+    Goto qgc_install_continue
+
+qgc_run_previous_uninstaller:
     ClearErrors
     ExecWait '$R0 /S -LEAVE_DATA=1 _?=$R3' $R2
     IfErrors qgc_uninstall_failed
