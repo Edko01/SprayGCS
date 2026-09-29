@@ -276,14 +276,15 @@ Item {
     // ----- field boundary line ------------------------------------------------
     // Drawn here because QGCMapPolygonVisuals fades its border with its fill,
     // and the fill is fully transparent. White with a dark edge, so it shows on
-    // any imagery; follows the points while they're dragged.
+    // any imagery; follows the points while they're dragged. While the boundary is
+    // being drawn it stays open (no side back to the first point) until Done.
     readonly property var _boundaryPath: {
         var path = _polygon.vertexDrag ? _polygon.dragPath : _polygon.path   // live while a point is dragged
         var closed = []
         for (var i = 0; i < path.length; i++) {
             closed.push(path[i])
         }
-        if (closed.length > 2) {
+        if (closed.length > 2 && !_polygon.traceMode) {
             closed.push(path[0])
         }
         return closed
@@ -312,6 +313,71 @@ Item {
             path:       _root._boundaryPath
             visible:    _root._boundaryPath.length > 1
             z:          QGroundControl.zOrderMapItems - 1.5
+        }
+    }
+
+    // Side lengths while the boundary is drawn or edited, kept upright along the side.
+    Component {
+        id: boundarySideLabelComponent
+
+        MapQuickItem {
+            property int side: -1
+
+            readonly property var _from: side >= 0 && side + 1 < _root._boundaryPath.length ? _root._boundaryPath[side] : null
+            readonly property var _to:   _from ? _root._boundaryPath[side + 1] : null
+
+            anchorPoint.x: sourceItem.width  / 2
+            anchorPoint.y: sourceItem.height / 2
+            coordinate:    _from ? _from.atDistanceAndAzimuth(_from.distanceTo(_to) / 2, _from.azimuthTo(_to)) : QtPositioning.coordinate()
+            visible:       _from !== null && _root._shapingBoundary
+            opacity:       _root.opacity
+            z:             QGroundControl.zOrderMapItems
+
+            sourceItem: Rectangle {
+                width:    sideLengthLabel.contentWidth + ScreenTools.defaultFontPixelWidth
+                height:   sideLengthLabel.contentHeight + 2
+                radius:   height / 2
+                color:    Qt.rgba(0, 0, 0, 0.65)
+                rotation: {
+                    if (!_from) {
+                        return 0
+                    }
+                    var r = (_from.azimuthTo(_to) - map.bearing - 90) % 360
+                    if (r < 0) {
+                        r += 360
+                    }
+                    if (r > 90 && r < 270) {
+                        r -= 180
+                    }
+                    return r
+                }
+
+                QGCLabel {
+                    id:               sideLengthLabel
+                    anchors.centerIn: parent
+                    text:             _from ? QGroundControl.unitsConversion.metersToAppSettingsHorizontalDistanceUnitsString(_from.distanceTo(_to), 0) : ""
+                    color:            "white"
+                    font.pointSize:   ScreenTools.smallFontPointSize
+                }
+            }
+        }
+    }
+
+    Repeater {
+        model: _shapingBoundary ? Math.max(0, _boundaryPath.length - 1) : 0
+
+        delegate: Item {
+            property var _label
+
+            Component.onCompleted: {
+                _label = boundarySideLabelComponent.createObject(map, { "side": index })
+                map.addMapItem(_label)
+            }
+            Component.onDestruction: {
+                if (_label) {
+                    _label.destroy()
+                }
+            }
         }
     }
 
