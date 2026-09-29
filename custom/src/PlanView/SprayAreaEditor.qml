@@ -361,7 +361,10 @@ Rectangle {
                     readonly property real _step: modelData.step
                     property bool          _nudging: false   // an arrow is held
                     property int           _nudgeDir: 0
-                    readonly property bool _adjusting: slider.pressed || _nudging
+                    // The value is read out beside the label while the slider is dragged
+                    // (the box updates on release). The arrows don't need it: a tap updates
+                    // the box straight away.
+                    readonly property bool _adjusting: slider.pressed
 
                     // Nearest step (in the units shown), kept inside the setting's range.
                     function _snap(v) {
