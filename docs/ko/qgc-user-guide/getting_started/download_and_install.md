@@ -1,0 +1,122 @@
+# 다운로드 및 설치
+
+:::tip
+These are **daily build** download links with the latest features. If you are looking for the last stable release, see the [stable docs](https://docs.qgroundcontrol.com/Stable_V5.1/en/qgc-user-guide/getting_started/download_and_install.html).
+:::
+
+:::tip
+설치 후 QGroundControl이 정상적으로 실행되지 않으면, [QGC 설정 문제 해결](../troubleshooting/qgc_setup.md)편을 참고하여 문제를 해결할 수 있습니다.
+:::
+
+## 시스템 요구 사항
+
+QGroundControl는 최신 컴퓨터나 모바일 장치에서 실행 가능합니다. 시스템 환경과 사용 가능한 시스템 리소스 상태에 따라 성능이 차이가 날 수 있습니다.
+More capable hardware will provide a better experience.
+최소 8Gb 메모리, SSD 다스크, Nvidia 또는 AMD 그래픽 및 i5 이상의 CPU가 장착된 컴퓨터를 사용하는 것이 좋습니다.
+
+최신 버전의 운영 체제에서 최적의 사용과 호환성을 발휘할 수 있습니다.
+
+## 윈도우 {#windows}
+
+Supported versions: Windows 10 (1809 or later), Windows 11:
+
+1. Download the installer:
+   - [x86_64](https://d176tv9ibo4jno.cloudfront.net/builds/master/QGroundControl-installer-AMD64.exe)
+   - [Arm64](https://d176tv9ibo4jno.cloudfront.net/builds/master/QGroundControl-installer-ARM64.exe)
+2. Double-click the executable to launch the installer.
+
+:::info
+윈도우용 설치 프로그램은 **QGroundControl**, **GPU 호환 모드** 및 **GPU 안전 모드**의 3가지 바로 가기를 생성합니다.
+시작 문제나 비디오 렌더링 문제가 발생하지 않으면, 첫 번째 바로 가기를 사용하십시오.
+자세한 내용은 [QGroundControl 설정 문제 해결 > 윈도우: UI 렌더링/비디오 드라이버 문제](../troubleshooting/qgc_setup.md#opengl_troubleshooting)를 참고하십시오.
+:::
+
+## Mac OS {#macOS}
+
+Supported versions: macOS 13 (Ventura) or later:
+
+<!-- match version using https://docs.qgroundcontrol.com/master/en/qgc-dev-guide/getting_started/#native-builds -->
+
+<!-- usually based on Qt macOS dependency -->
+
+1. Download [QGroundControl.dmg](https://d176tv9ibo4jno.cloudfront.net/builds/master/QGroundControl.dmg).
+2. Double-click the .dmg file to mount it. In the window that opens, drag the _QGroundControl_ icon onto the _Applications_ folder shortcut shown next to it.
+
+:::info
+The download is a universal binary that runs natively on both Apple Silicon and Intel Macs.
+Official builds are signed and notarized, so no Gatekeeper security overrides are needed to run the app.
+:::
+
+## 우분투 리눅스 {#ubuntu}
+
+Supported versions: Ubuntu 24.04 LTS, 26.04 LTS:
+
+:::info
+The AppImage downloads below run on Ubuntu 24.04 LTS and 26.04 LTS. If you need a version of _QGroundControl_ that runs on Ubuntu 22.04, it is possible, but you have to [build it yourself](../../qgc-dev-guide/getting_started/index.md).
+:::
+
+Ubuntu comes with a serial modem manager that interferes with any robotics related use of a serial port (or USB serial).
+_QGroundContro&#x6C;_&#xC744; 설치 전에 모뎀 관리자를 제거하고, 직렬 포트 접근 권한을 부여합니다.
+
+**Before installing _QGroundControl_ for the first time:**
+
+1. Enable serial-port access
+   Add your user to the dialout group so you can talk to USB devices without root:
+
+```
+sudo usermod -aG dialout "$(id -un)"
+```
+
+:::info
+At login, your shell takes a snapshot of your user and group memberships. Because you just changed groups, you need a fresh login shell to pick up “dialout” access. Logging out and back in reloads that snapshot, so you get the new permissions.
+:::
+
+1. (Optional) Disable ModemManager
+   On some Ubuntu-based systems, ModemManager can claim serial ports that QGC needs. If you don't use it elsewhere, mask or remove it.
+
+```
+# preferred: stop and mask the service
+sudo systemctl mask --now ModemManager.service
+
+# or, if you’d rather remove the package
+sudo apt remove --purge modemmanager
+```
+
+1. On the command prompt, enter:
+
+```sh
+sudo apt install -y libfuse2 libxcb-xinerama0 libxkbcommon-x11-0 libxcb-cursor0
+```
+
+**To install _QGroundControl_:**
+
+1. Download the AppImage for your architecture:
+   - [Linux x86_64](https://d176tv9ibo4jno.cloudfront.net/builds/master/QGroundControl-x86_64.AppImage)
+   - [Linux aarch64](https://d176tv9ibo4jno.cloudfront.net/builds/master/QGroundControl-aarch64.AppImage)
+
+2. Make the AppImage executable
+
+```
+chmod +x QGroundControl-<arch>.AppImage
+```
+
+1. Run QGroundControl
+   Either double-click the AppImage in your file manager or launch it from a terminal:
+
+```
+./QGroundControl-<arch>.AppImage
+```
+
+## 안드로이드 {#android}
+
+Supported versions: Android 9 (API 28) or later (arm 32/64):
+
+- [Android APK](https://d176tv9ibo4jno.cloudfront.net/builds/master/QGroundControl.apk)
+
+:::important
+The version of Qt used by QGroundControl requires Android 9 (API 28) as the minimum supported version. It is not possible to support older Android releases. This means that some integrated controllers running older versions of Android are no longer compatible with current builds of QGroundControl. QGroundControl 5.0 stable is the last release that supports these older devices. Note that 5.0 may not fully support firmware versions released after it, so users on older controllers may experience limited compatibility with newer autopilot firmware.
+:::
+
+## Old Stable Releases
+
+Old stable releases can be found on <a href="https://github.com/mavlink/qgroundcontrol/releases/" target="_blank">GitHub</a>.
