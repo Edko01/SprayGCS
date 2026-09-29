@@ -1,0 +1,125 @@
+{
+    "version": 1,
+    "fileType": "FactMetaData",
+    "QGC.MetaData.Facts": [
+        {
+            "name": "baseReceiverManufacturers",
+            "shortDesc": "GPS manufacturers for settings",
+            "type": "uint8",
+            "enumStrings": "All,Trimble,Septentrio,Femtomes,UBlox,Unicore UM980/UM982,Quectel LG290P,Passive RTCM/NMEA",
+            "enumValues": "0,1,2,3,4,5,6,7",
+            "default": 1,
+            "label": "GPS manufacturers for settings"
+        },
+        {
+            "name": "serialDevice",
+            "shortDesc": "Serial device",
+            "longDesc": "Explicitly selected receiver port. Generic USB serial adapters are not automatically identified as GNSS receivers.",
+            "type": "string",
+            "default": "",
+            "label": "Serial device"
+        },
+        {
+            "name": "serialBaudRate",
+            "shortDesc": "Baud rate",
+            "longDesc": "Serial rate for an explicitly selected receiver. Passive input requires the rate already configured on the receiver.",
+            "type": "uint32",
+            "default": 115200,
+            "min": 1200,
+            "max": 4000000,
+            "decimalPlaces": 0,
+            "label": "Baud rate"
+        },
+        {
+            "name": "surveyInAccuracyLimit",
+            "shortDesc": "Survey in accuracy",
+            "longDesc": "Receiver-specific survey accuracy limit. Quectel applies this limit to individual observations, not to guaranteed final position accuracy.",
+            "type": "double",
+            "default": 2.0,
+            "min": 0.01,
+            "max": 5.0,
+            "increment": 0.01,
+            "units": "m",
+            "decimalPlaces": 2,
+            "label": "Survey in accuracy"
+        },
+        {
+            "name": "surveyInMinObservationDuration",
+            "shortDesc": "Min observation time",
+            "longDesc": "Defines the minimum observation time for the position calculation. Quectel counts accepted 1 Hz observations; elapsed time can be longer.",
+            "type": "Uint32",
+            "default": 180,
+            "min": 1,
+            "max": 360,
+            "increment": 1,
+            "units": "secs",
+            "decimalPlaces": 0,
+            "label": "Min observation time"
+        },
+        {
+            "name": "receiverAveragingDuration",
+            "shortDesc": "Maximum averaging time",
+            "longDesc": "Maximum receiver-managed averaging time. This mode does not guarantee a position accuracy.",
+            "type": "uint32",
+            "default": 60,
+            "min": 1,
+            "max": 3600,
+            "increment": 1,
+            "units": "s",
+            "decimalPlaces": 0,
+            "label": "Maximum averaging time"
+        },
+        {
+            "name": "useFixedBasePosition",
+            "shortDesc": "Use specified base mode",
+            "longDesc": "Specify the RTK base mode: accuracy-controlled survey-in, fixed position, or receiver-managed averaging without an accuracy guarantee.",
+            "type": "uint8",
+            "enumStrings": "Survey-In,Fixed,Receiver-managed averaging",
+            "enumValues": "0,1,2",
+            "default": 0,
+            "label": "Use specified base mode"
+        },
+        {
+            "name": "fixedBasePositionLatitude",
+            "shortDesc": "Base Position Latitude",
+            "longDesc": "Defines the latitude of the fixed RTK base position.",
+            "type": "double",
+            "default": 0,
+            "min": -90,
+            "max": 90,
+            "decimalPlaces": 9,
+            "label": "Base Position Latitude"
+        },
+        {
+            "name": "fixedBasePositionLongitude",
+            "shortDesc": "Base Position Longitude",
+            "longDesc": "Defines the longitude of the fixed RTK base position.",
+            "type": "double",
+            "default": 0,
+            "min": -180,
+            "max": 180,
+            "decimalPlaces": 9,
+            "label": "Base Position Longitude"
+        },
+        {
+            "name": "fixedBasePositionAltitude",
+            "shortDesc": "Base Position Alt (WGS84)",
+            "longDesc": "Defines the altitude of the fixed RTK base position.",
+            "type": "float",
+            "default": 0,
+            "units": "vertical m",
+            "decimalPlaces": 2,
+            "label": "Base Position Alt (WGS84)"
+        },
+        {
+            "name": "fixedBasePositionAccuracy",
+            "shortDesc": "Base Position Accuracy",
+            "longDesc": "Defines the accuracy of the fixed RTK base position.",
+            "type": "float",
+            "default": 0,
+            "units": "m",
+            "decimalPlaces": 2,
+            "label": "Base Position Accuracy"
+        }
+    ]
+}
