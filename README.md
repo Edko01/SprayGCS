@@ -1,3 +1,17 @@
+# SprayGCS
+
+Ground station for planning variable-rate spray missions on a PX4 quad (Auterion Skynode),
+built as a custom version of QGroundControl. The upstream QGroundControl readme follows below.
+
+- **Install on Windows:** download `SprayGCS-installer-AMD64.exe` from the latest
+  [release](https://github.com/Edko01/SprayGCS/releases/latest) and run it. The installer isn't
+  code-signed, so Windows may say "Windows protected your PC": click **More info**, then **Run anyway**.
+- **New release:** change the number in `custom/VERSION` (e.g. `1.0.1`) and push to `main`. Every push
+  to `main` builds the installer (Actions tab); a new version number also publishes a release.
+- SprayGCS code lives in `custom/`, with a few edits to QGroundControl files under `src/`.
+
+---
+
 <p align="center">
   <img src="https://raw.githubusercontent.com/Dronecode/UX-Design/35d8148a8a0559cd4bcf50bfa2c94614983cce91/QGC/Branding/Deliverables/QGC_RGB_Logo_Horizontal_Positive_PREFERRED/QGC_RGB_Logo_Horizontal_Positive_PREFERRED.svg" alt="QGroundControl Logo" width="500">
 </p>
