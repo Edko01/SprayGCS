@@ -109,6 +109,19 @@ jobs:
         with:
           build-dir: ${{ runner.temp }}/build
           build-type: ${{ env.BUILD_TYPE }}
+          output-file: ${{ runner.temp }}/build-output.log
+
+      - name: Show build errors
+        if: failure()
+        shell: python
+        run: |
+          import os, re
+          path = os.path.join(os.environ["RUNNER_TEMP"], "build-output.log")
+          lines = open(path, encoding="utf-8", errors="replace").read().splitlines() if os.path.exists(path) else []
+          errs = [l.strip() for l in lines if re.search(r"\berror\b|: fatal|FAILED:", l, re.I)]
+          text = "\n".join(errs[:80]) or "\n".join(lines[-60:]) or "no build log"
+          enc = text.replace("%", "%25").replace("\r", "").replace("\n", "%0A")
+          print(f"::error title=Build errors::{enc[:60000]}")
 
       - name: Check the app starts
         uses: ./.github/actions/verify-executable
