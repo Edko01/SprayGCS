@@ -648,32 +648,107 @@ Rectangle {
                                   : qsTr("Flies straight to the entry side (thick blue), then inside the field to the start. Leaves the field through the same side.")
             }
 
+            // Name, value box and up / down arrows (tap: one step, hold: repeat).
             Repeater {
                 model: [
-                    { label: qsTr("Transit height"), fact: missionItem.transitAltitude },
-                    { label: qsTr("Transit speed"),  fact: missionItem.transitSpeed }
+                    { label: qsTr("Transit height"), fact: missionItem.transitAltitude, step: 1 },
+                    { label: qsTr("Transit speed"),  fact: missionItem.transitSpeed,    step: 0.5 }
                 ]
 
                 delegate: Item {
+                    id: transitRow
+
+                    readonly property var  _fact: modelData.fact
+                    readonly property real _step: modelData.step
+                    property int           _stepDir: 0
+
+                    function _stepOnce(dir) {
+                        var v = Math.round((_fact.value + dir * _step) / _step) * _step
+                        v = Math.min(_fact.max, Math.max(_fact.min, v))
+                        if (Math.abs(_fact.value - v) > 1e-9) {
+                            _fact.value = v
+                        }
+                    }
+                    function _startStep(dir) {
+                        _stepDir = dir
+                        _stepOnce(dir)
+                        transitStepTimer.interval = 400   // hold to repeat
+                        transitStepTimer.restart()
+                    }
+
                     Layout.fillWidth: true
                     implicitHeight:   _rowHeight
 
+                    Timer {
+                        id:          transitStepTimer
+                        repeat:      true
+                        onTriggered: {
+                            interval = 100
+                            transitRow._stepOnce(transitRow._stepDir)
+                        }
+                    }
+
                     QGCLabel {
                         anchors.left:           parent.left
-                        anchors.right:          transitField.left
+                        anchors.right:          transitControls.left
                         anchors.rightMargin:    _margin
                         anchors.verticalCenter: parent.verticalCenter
                         text:                   modelData.label
                         font.pointSize:         ScreenTools.mediumFontPointSize
                         elide:                  Text.ElideRight
                     }
-                    FactTextField {
-                        id:                     transitField
+
+                    Row {
+                        id:                     transitControls
                         anchors.right:          parent.right
                         anchors.verticalCenter: parent.verticalCenter
-                        width:                  _fieldWidth
-                        fact:                   modelData.fact
-                        showUnits:              true
+                        spacing:                _margin / 2
+
+                        FactTextField {
+                            anchors.verticalCenter: parent.verticalCenter
+                            width:                  _fieldWidth
+                            fact:                   transitRow._fact
+                            showUnits:              true
+                        }
+                        // Up over down, like a spin box, so the name keeps its room.
+                        Column {
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing:                2
+
+                            Repeater {
+                                model: [ { dir:  1, icon: "/InstrumentValueIcons/cheveron-up.svg" },
+                                         { dir: -1, icon: "/InstrumentValueIcons/cheveron-down.svg" } ]
+                                delegate: transitArrow
+                            }
+                        }
+                    }
+
+                    Component {
+                        id: transitArrow
+
+                        Rectangle {
+                            width:           ScreenTools.defaultFontPixelHeight * 1.8
+                            height:          (_rowHeight - 2) / 2
+                            radius:          _radius
+                            color:           transitArrowArea.pressed ? _accent : qgcPal.windowShade
+                            Accessible.name: modelData.dir < 0 ? qsTr("Decrease") : qsTr("Increase")
+
+                            QGCColoredImage {
+                                anchors.centerIn:  parent
+                                height:            parent.height * 0.7
+                                width:             height
+                                sourceSize.height: height
+                                source:            modelData.icon
+                                color:             transitArrowArea.pressed ? _accentText : qgcPal.text
+                            }
+                            MouseArea {
+                                id:           transitArrowArea
+                                anchors.fill: parent
+                                onPressed:    transitRow._startStep(modelData.dir)
+                                onReleased:   transitStepTimer.stop()
+                                onCanceled:   transitStepTimer.stop()
+                            }
+                        }
                     }
                 }
             }
