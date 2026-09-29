@@ -585,6 +585,18 @@ Item {
             onLoaded:           item.map = editorMap
         }
 
+        // SprayGCS: the job at a glance (field name, Undo / Redo, acres, product,
+        // time, passes) on the left, under the map tools. Their popups draw over it.
+        Loader {
+            id:                 sprayJobPanel
+            anchors.margins:    _toolsMargin
+            anchors.left:       parent.left
+            anchors.top:        sprayMapTools.bottom
+            z:                  QGroundControl.zOrderWidgets - 1
+            source:             "qrc:/qml/Custom/Plan/SprayJobPanel.qml"
+            onLoaded:           item.missionController = _missionController
+        }
+
         MapScale {
             anchors.margins: _toolsMargin
             anchors.left: sprayMapTools.item ? sprayMapTools.right : (toolStrip.visible ? toolStrip.right : parent.left)

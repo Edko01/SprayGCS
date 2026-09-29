@@ -81,59 +81,8 @@ Rectangle {
         }
         spacing: _margin
 
-        // ---- field name ---------------------------------------------------------
-        RowLayout {
-            Layout.fillWidth: true
-            spacing:          _margin
-
-            QGCLabel {
-                text:           qsTr("Field name")
-                font.pointSize: ScreenTools.mediumFontPointSize
-            }
-            QGCTextField {
-                id:                 nameField
-                Layout.fillWidth:   true
-                text:               missionItem.fieldName
-                placeholderText:    qsTr("e.g. North 40")
-                maximumLength:      24
-                onEditingFinished:  missionItem.fieldName = text
-            }
-        }
-
-        // ---- undo / redo --------------------------------------------------------
-        RowLayout {
-            Layout.fillWidth: true
-            spacing:          _margin / 2
-
-            Repeater {
-                model: [
-                    { text: qsTr("Undo"), redo: false },
-                    { text: qsTr("Redo"), redo: true }
-                ]
-
-                delegate: Rectangle {
-                    property bool _enabled: modelData.redo ? missionItem.canRedo : missionItem.canUndo
-
-                    Layout.fillWidth: true
-                    implicitHeight:   ScreenTools.defaultFontPixelHeight * 2
-                    radius:           _radius
-                    color:            qgcPal.windowShade
-                    opacity:          _enabled ? 1.0 : 0.4
-
-                    QGCLabel {
-                        anchors.centerIn: parent
-                        text:             modelData.text
-                        font.pointSize:   ScreenTools.mediumFontPointSize
-                        font.bold:        true
-                    }
-                    QGCMouseArea {
-                        anchors.fill: parent
-                        enabled:      parent._enabled
-                        onClicked:    modelData.redo ? missionItem.redo() : missionItem.undo()
-                    }
-                }
-            }
-        }
+        // Field name, Undo / Redo and the job numbers are in the panel on the
+        // left of the map (SprayJobPanel.qml).
 
         QGCLabel {
             Layout.fillWidth:    true
@@ -152,48 +101,6 @@ Rectangle {
             color:               qgcPal.warningText
             text:                qsTr("Field too small for these settings. Reduce the buffer or swath width.")
             visible:             missionItem.fieldPolygon.isValid && !missionItem.pathValid
-        }
-
-        // ---- job numbers --------------------------------------------------------
-        GridLayout {
-            Layout.fillWidth: true
-            columns:          2
-            columnSpacing:    _margin / 2
-            rowSpacing:       _margin / 2
-            visible:          missionItem.pathValid
-
-            Repeater {
-                model: [
-                    { value: missionItem.sprayedAcresEst.toFixed(1),  caption: qsTr("acres sprayed") },
-                    { value: missionItem.estimatedVolume.toFixed(1),  caption: qsTr("gal product") },
-                    { value: missionItem.estimatedMinutes.toFixed(0), caption: qsTr("min flight") },
-                    { value: missionItem.passCount + (missionItem.headlandPass.rawValue ? "+1" : ""), caption: qsTr("passes") }
-                ]
-
-                delegate: Rectangle {
-                    Layout.fillWidth: true
-                    implicitHeight:   tileColumn.height + _margin
-                    color:            qgcPal.windowShade
-                    radius:           _radius
-
-                    Column {
-                        id:               tileColumn
-                        anchors.centerIn: parent
-
-                        QGCLabel {
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            text:                     modelData.value
-                            font.pointSize:           ScreenTools.largeFontPointSize
-                            font.bold:                true
-                        }
-                        QGCLabel {
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            text:                     modelData.caption
-                            font.pointSize:           ScreenTools.smallFontPointSize
-                        }
-                    }
-                }
-            }
         }
 
         // ---- edit boundary ------------------------------------------------------
