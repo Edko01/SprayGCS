@@ -53,6 +53,10 @@ Item {
     property bool _editActive:  _editRoute || _editTransitRoute     // the touch area below is in use
     property bool _previewing:  _missionItem.previewPath.length > 1   // a slider is being dragged
     readonly property real _routeDim: _previewing ? 0.25 : 1.0
+    // While the boundary is being drawn or edited only the boundary is shown, so the
+    // generated route doesn't cover the imagery along the edge. It's back on Done.
+    readonly property bool _shapingBoundary: _currentItem && _root.interactive
+                                             && (_polygon.traceMode || _missionItem.boundaryEditMode)
     property var  _editPoints:  _editRoute ? _missionItem.flightPath : (_editTransitRoute ? _missionItem.transitEditPoints : [])
 
     readonly property color _boundaryColor: "#ffffff"
@@ -321,7 +325,7 @@ Item {
             border.color: _sprayColor
             border.width: 1   // shows where the buffer ends
             path:         _missionItem.sprayAreaPath
-            visible:      _missionItem.pathValid
+            visible:      _missionItem.pathValid && !_root._shapingBoundary
             z:            QGroundControl.zOrderMapItems - 2
         }
     }
@@ -337,6 +341,7 @@ Item {
             line.width: segment && (segment.spray || segment.outside) ? 6 : 4
             opacity:    0.55 * (_currentItem ? 1.0 : 0.7) * _root.opacity * _root._routeDim
             path:       segment ? [ segment.start, segment.end ] : []
+            visible:    !_root._shapingBoundary
             z:          QGroundControl.zOrderMapItems - 1
         }
     }
@@ -351,6 +356,7 @@ Item {
             line.width: segment && (segment.spray || segment.outside) ? 3 : 1.5
             opacity:    (_currentItem ? 1.0 : 0.7) * _root.opacity * _root._routeDim
             path:       segment ? [ segment.start, segment.end ] : []
+            visible:    !_root._shapingBoundary
             z:          QGroundControl.zOrderMapItems - 1
         }
     }
@@ -366,6 +372,7 @@ Item {
             anchorPoint.y: sourceItem.height / 2
             coordinate:    segment ? segment.mid : QtPositioning.coordinate()
             visible:       segment && map.zoomLevel >= _labelMinZoom && segment.length >= _labelMinLenM && !_editRoute && _root._labelsFit
+                           && !_root._shapingBoundary
             opacity:       _root.opacity
             z:             QGroundControl.zOrderMapItems
 
@@ -543,6 +550,7 @@ Item {
             line.width: 3
             opacity:    (_currentItem ? 1.0 : 0.6) * _root.opacity
             path:       leg ? [ leg.start, leg.end ] : []
+            visible:    !_root._shapingBoundary
             z:          QGroundControl.zOrderMapItems - 1
         }
     }
@@ -576,6 +584,7 @@ Item {
             line.width: 7
             opacity:    _root.opacity
             path:       corners ? corners : []
+            visible:    !_root._shapingBoundary
             z:          QGroundControl.zOrderMapItems
         }
     }
@@ -606,7 +615,7 @@ Item {
             anchorPoint.x: sourceItem.width  / 2
             anchorPoint.y: sourceItem.height / 2
             coordinate:    _missionItem.startPoint
-            visible:       _missionItem.pathValid && !_root._editRoute
+            visible:       _missionItem.pathValid && !_root._editRoute && !_root._shapingBoundary
             opacity:       _root.opacity
             z:             QGroundControl.zOrderMapItems + 0.5   // under the item's number label
 
@@ -645,7 +654,7 @@ Item {
             itemCoordinate: _missionItem.startPoint
             visible:        _currentItem && _root.interactive && _missionItem.pathValid
                             && !_root._editRoute && !_root._editSides && !_root._editTransit
-                            && !_root._alignPasses && !_missionItem.boundaryEditMode
+                            && !_root._alignPasses && !_root._shapingBoundary
             z:              QGroundControl.zOrderMapItems + 1.5   // under the boundary's handles
 
             Component.onCompleted: _ready = true
@@ -675,7 +684,7 @@ Item {
             anchorPoint.x: sourceItem.width  / 2
             anchorPoint.y: sourceItem.height / 2
             coordinate:    _missionItem.endPoint
-            visible:       _missionItem.pathValid && !_root._editRoute
+            visible:       _missionItem.pathValid && !_root._editRoute && !_root._shapingBoundary
             opacity:       _root.opacity
             z:             QGroundControl.zOrderMapItems + 0.5
 
