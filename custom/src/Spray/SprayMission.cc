@@ -196,4 +196,105 @@ MissionStats missionStats(const std::vector<PlanStep>& steps, double climbRateMS
     return stats;
 }
 
+TripEstimate estimateTrips(const TripInput& in)
+{
+    TripEstimate result;
+    const std::vector<LatLon>& points = in.route.points();
+    const std::vector<bool>&   spray  = in.route.segmentSpray();
+    size_t legCount = spray.size();
+    while (legCount > 0 && !spray[legCount - 1]) {
+        --legCount;   // the flight to the route's end after the last spray doesn't need a trip of its own
+    }
+    if (points.size() < 2 || legCount == 0 || in.spraySpeedMS <= 0.0 || in.transitSpeedMS <= 0.0) {
+        return result;
+    }
+
+    const double climbS = in.climbRateMS > 0.0 ? in.transitAltM / in.climbRateMS : 0.0;
+    auto outS  = [&](const LatLon& p) { return climbS + distanceM(in.takeoff, p) / in.transitSpeedMS; };
+    auto homeS = [&](const LatLon& p) { return distanceM(p, in.takeoff) / in.transitSpeedMS + climbS; };
+    auto along = [](const LatLon& a, const LatLon& b, double t) {
+        return LatLon { a.lat + (b.lat - a.lat) * t, a.lon + (b.lon - a.lon) * t };
+    };
+    const bool tankLimit    = in.tankVolume > 0.0 && in.volumePerM2 > 0.0;
+    const bool batteryLimit = in.batteryS > 0.0;
+
+    LatLon here     = points[0];
+    double t        = outS(here);
+    double tankLeft = in.tankVolume;
+    double load     = 0.0;    // sprayed this trip
+    double progress = 0.0;    // route metres flown this trip
+    if (batteryLimit && t + homeS(here) >= in.batteryS) {
+        return result;
+    }
+
+    size_t leg = 0;
+    while (leg < legCount) {
+        const LatLon& end    = points[leg + 1];
+        const double  length = distanceM(here, end);
+        const double  perM   = spray[leg] ? in.swathM * in.volumePerM2 : 0.0;
+
+        double m      = length;
+        bool   empty  = false;
+        bool   flat   = false;
+        // (1e-9: a tank that empties right at the end of a leg covers the leg)
+        if (tankLimit && perM > 0.0 && tankLeft + 1e-9 < perM * m) {
+            m     = std::max(0.0, tankLeft / perM);
+            empty = true;
+        }
+        if (batteryLimit && length > 0.0) {
+            auto timeLeftAt = [&](double d) {
+                return in.batteryS - (t + d / in.spraySpeedMS + homeS(along(here, end, d / length)));
+            };
+            if (timeLeftAt(m) < 0.0) {
+                double lo = 0.0, hi = m;
+                for (int i = 0; i < 40; ++i) {
+                    const double mid = (lo + hi) / 2.0;
+                    (timeLeftAt(mid) >= 0.0 ? lo : hi) = mid;
+                }
+                m     = lo;
+                empty = false;
+                flat  = true;
+            }
+        }
+
+        const LatLon stop = length > 0.0 ? along(here, end, m / length) : end;
+        t        += m / in.spraySpeedMS;
+        tankLeft -= perM * m;
+        load     += perM * m;
+        progress += m;
+
+        if (!empty && !flat) {
+            here = end;
+            ++leg;
+            continue;
+        }
+
+        // Out of liquid or battery: home, refill or swap, and back to here.
+        if (progress < 0.01) {
+            return TripEstimate {};   // a fresh battery can't get anything done
+        }
+        result.stops.push_back(stop);
+        (empty ? result.tankTrips : result.batteryTrips)++;
+        result.fullLoad = std::max(result.fullLoad, load);
+        result.totalS  += t + homeS(stop);
+        ++result.trips;
+
+        here     = stop;
+        t        = outS(here);
+        tankLeft = in.tankVolume;
+        load     = 0.0;
+        progress = 0.0;
+        if (batteryLimit && t + homeS(here) >= in.batteryS) {
+            return TripEstimate {};
+        }
+    }
+
+    result.lastLoad = load;
+    result.fullLoad = std::max(result.fullLoad, load);
+    result.totalS  += t + homeS(here);
+    ++result.trips;
+    result.valid = true;
+    return result;
+}
+
 } // namespace spray

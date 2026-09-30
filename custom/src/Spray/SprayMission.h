@@ -81,4 +81,35 @@ struct MissionStats {
 // vertical-only legs at `climbRateMS`.
 MissionStats missionStats(const std::vector<PlanStep>& steps, double climbRateMS = 2.0);
 
+// Trips. A spray drone's tank and battery last only part of a job: it sprays
+// until one runs out, flies home, and after the refill or battery swap flies
+// back to where it stopped. estimateTrips() simulates that along the route
+// (straight out from takeoff and straight back, at transit height and speed)
+// to tell the planner how many trips the job takes and how much to fill.
+struct TripInput {
+    SprayRoute route;                 // flying order; no-spray legs after the last sprayed one are ignored
+    LatLon     takeoff;
+    double     swathM         = 6.0;
+    double     volumePerM2    = 0.0;  // application rate, in the tank's volume unit
+    double     tankVolume     = 0.0;  // 0 = no limit
+    double     batteryS       = 0.0;  // flight time per battery until it must head home; 0 = no limit
+    double     spraySpeedMS   = 5.0;
+    double     transitSpeedMS = 8.0;
+    double     transitAltM    = 10.0; // climbed after takeoff, descended before landing
+    double     climbRateMS    = 2.0;
+};
+
+struct TripEstimate {
+    bool                valid        = false;  // false: a battery can't get to the field and back
+    int                 trips        = 0;
+    int                 tankTrips    = 0;      // trips (all but the last) ended by an empty tank...
+    int                 batteryTrips = 0;      // ...or by the battery
+    std::vector<LatLon> stops;                 // where each trip but the last runs out
+    double              fullLoad     = 0.0;    // most sprayed on one trip
+    double              lastLoad     = 0.0;    // sprayed on the last trip
+    double              totalS       = 0.0;    // flying time of all trips, transits included
+};
+
+TripEstimate estimateTrips(const TripInput& in);
+
 } // namespace spray

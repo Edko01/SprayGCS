@@ -58,6 +58,9 @@ public:
     Q_PROPERTY(Fact          *transitMode      READ transitMode      CONSTANT)   ///< 0 = A (entry side), 1 = B (planned route)
     Q_PROPERTY(Fact          *transitAltitude  READ transitAltitude  CONSTANT)
     Q_PROPERTY(Fact          *transitSpeed     READ transitSpeed     CONSTANT)
+    // The drone (saved for all jobs): used to estimate the trips a job takes.
+    Q_PROPERTY(Fact          *tankCapacity     READ tankCapacity     CONSTANT)   ///< gal
+    Q_PROPERTY(Fact          *batteryMinutes   READ batteryMinutes   CONSTANT)   ///< flight time per battery until it heads home
 
     // Transit, start and end (see SprayMission.h). Coordinates are invalid when unknown.
     Q_PROPERTY(bool           hasTakeoff       READ hasTakeoff       NOTIFY missionUpdated)
@@ -95,6 +98,16 @@ public:
     Q_PROPERTY(double       sprayAreaAcres   READ sprayAreaAcres   NOTIFY pathUpdated)
     Q_PROPERTY(double       estimatedVolume  READ estimatedVolume  NOTIFY pathUpdated)  ///< gallons
     Q_PROPERTY(double       estimatedMinutes READ estimatedMinutes NOTIFY missionUpdated)
+
+    // Trips: the drone sprays until the tank or battery runs out, then comes
+    // back after the refill or swap (see spray::estimateTrips).
+    Q_PROPERTY(bool         tripsValid       READ tripsValid       NOTIFY tripsChanged)  ///< false: a battery can't reach the field and back
+    Q_PROPERTY(int          estimatedTrips   READ estimatedTrips   NOTIFY tripsChanged)
+    Q_PROPERTY(QString      tripsLimitedBy   READ tripsLimitedBy   NOTIFY tripsChanged)  ///< "tank", "battery" or "" (one trip)
+    Q_PROPERTY(double       fullLoadGallons  READ fullLoadGallons  NOTIFY tripsChanged)  ///< most sprayed on one trip
+    Q_PROPERTY(double       lastLoadGallons  READ lastLoadGallons  NOTIFY tripsChanged)  ///< sprayed on the last trip
+    Q_PROPERTY(double       allTripsMinutes  READ allTripsMinutes  NOTIFY tripsChanged)  ///< flying time of every trip, transits included
+    Q_PROPERTY(QVariantList tripStops        READ tripStops        NOTIFY tripsChanged)  ///< where each trip but the last runs out
 
     // Live preview of the passes while a slider is dragged (the route itself
     // only changes when the slider is released).
@@ -141,6 +154,8 @@ public:
     Fact          *transitMode()     { return &_transitModeFact; }
     Fact          *transitAltitude() { return &_transitAltitudeFact; }
     Fact          *transitSpeed()    { return &_transitSpeedFact; }
+    Fact          *tankCapacity()    { return &_tankCapacityFact; }
+    Fact          *batteryMinutes()  { return &_batteryMinutesFact; }
 
     bool           hasTakeoff()         const;
     QGeoCoordinate takeoffPoint()       const;
@@ -177,6 +192,13 @@ public:
     double       sprayAreaAcres()   const { return _result.sprayAreaM2 / 4046.8564224; }
     double       estimatedVolume()  const;
     double       estimatedMinutes() const;
+    bool         tripsValid()       const { return _trips.valid; }
+    int          estimatedTrips()   const { return _trips.trips; }
+    QString      tripsLimitedBy()   const;
+    double       fullLoadGallons()  const { return _trips.fullLoad; }
+    double       lastLoadGallons()  const { return _trips.lastLoad; }
+    double       allTripsMinutes()  const { return _trips.totalS / 60.0; }
+    QVariantList tripStops()        const { return _tripStopsVariant; }
     QVariantList sides()            const { return _sidesVariant; }
     int          customSideCount()  const;
     double       minBufferM()       const { return kMinBufferM; }
@@ -318,6 +340,7 @@ signals:
     void undoRedoChanged();
     void sprayedChanged();
     void breakpointChanged();
+    void tripsChanged();
 
 private slots:
     void _setDirty();
@@ -385,6 +408,7 @@ private:
     void _setBreakpoint(bool valid, const std::vector<spray::Strip> &strips, const spray::LatLon &stop,
                         const QString &reason, const QDateTime &time);
     bool _droneFliesThisPlan(Vehicle *vehicle) const;
+    void _updateTrips();                    ///< estimate the trips for the route as it is now
     void _emitRouteChanged(int oldLastSeq);
     void _rebuildRouteVariants();
 
@@ -402,6 +426,10 @@ private:
     SettingsFact                  _transitModeFact;
     SettingsFact                  _transitAltitudeFact;
     SettingsFact                  _transitSpeedFact;
+    SettingsFact                  _tankCapacityFact;
+    SettingsFact                  _batteryMinutesFact;
+    spray::TripEstimate           _trips;
+    QVariantList                  _tripStopsVariant;
 
     spray::Result                 _result;
     spray::SprayRoute             _route;

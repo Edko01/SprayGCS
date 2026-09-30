@@ -499,6 +499,56 @@ Item {
         }
     }
 
+    // ----- estimated trips: where each tank or battery is expected to run out --
+    Component {
+        id: tripStopComponent
+
+        MapQuickItem {
+            property int trip: 0
+
+            anchorPoint.x: sourceItem.width  / 2
+            anchorPoint.y: sourceItem.height / 2
+            visible:       _missionItem.pathValid && !_root._editRoute && !_root._shapingBoundary
+            opacity:       0.85 * _root.opacity
+            z:             QGroundControl.zOrderMapItems + 0.3
+
+            sourceItem: Rectangle {
+                width:        tripLabel.width + ScreenTools.defaultFontPixelWidth
+                height:       ScreenTools.defaultFontPixelHeight * 1.3
+                radius:       height / 2
+                color:        "#1f2937"
+                border.color: "white"
+                border.width: 1
+
+                QGCLabel {
+                    id:               tripLabel
+                    anchors.centerIn: parent
+                    text:             qsTr("Trip %1 ends").arg(trip)
+                    color:            "white"
+                    font.pointSize:   ScreenTools.smallFontPointSize
+                }
+            }
+        }
+    }
+
+    Repeater {
+        model: _missionItem.tripStops
+
+        delegate: Item {
+            property var _marker
+
+            Component.onCompleted: {
+                _marker = tripStopComponent.createObject(map, { "coordinate": modelData, "trip": index + 1 })
+                map.addMapItem(_marker)
+            }
+            Component.onDestruction: {
+                if (_marker) {
+                    _marker.destroy()
+                }
+            }
+        }
+    }
+
     // ----- one line per route section ---------------------------------------
     Component {
         id: segmentOutlineComponent

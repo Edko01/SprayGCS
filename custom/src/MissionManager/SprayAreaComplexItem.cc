@@ -2,6 +2,7 @@
 
 #include "AppMessages.h"
 #include "AppSettings.h"
+#include "CustomPlugin.h"
 #include "JsonParsing.h"
 #include "MissionFlightStatus.h"
 #include "MissionController.h"
@@ -46,6 +47,8 @@ SprayAreaComplexItem::SprayAreaComplexItem(PlanMasterController *masterControlle
     , _transitModeFact     (settingsGroup, _metaDataMap[QStringLiteral("TransitMode")])
     , _transitAltitudeFact (settingsGroup, _metaDataMap[QStringLiteral("TransitAltitude")])
     , _transitSpeedFact    (settingsGroup, _metaDataMap[QStringLiteral("TransitSpeed")])
+    , _tankCapacityFact    (settingsGroup, _metaDataMap[QStringLiteral("TankCapacity")])
+    , _batteryMinutesFact  (settingsGroup, _metaDataMap[QStringLiteral("BatteryMinutes")])
 {
     _editorQml = QStringLiteral("qrc:/qml/Custom/Plan/SprayAreaEditor.qml");
 
@@ -62,7 +65,12 @@ SprayAreaComplexItem::SprayAreaComplexItem(PlanMasterController *masterControlle
     connect(&_applicationRateFact, &Fact::valueChanged, this, [this]() {
         _setDirty();
         emit pathUpdated();   // volume estimate changes
+        _updateTrips();
     });
+    // The drone's tank and battery belong to the drone, not the plan: they
+    // only change the trip estimate.
+    connect(&_tankCapacityFact,   &Fact::valueChanged, this, &SprayAreaComplexItem::_updateTrips);
+    connect(&_batteryMinutesFact, &Fact::valueChanged, this, &SprayAreaComplexItem::_updateTrips);
     // Spray height and speed, and the transit settings, change the mission
     // but not the passes.
     for (Fact *fact : { static_cast<Fact *>(&_speedFact), static_cast<Fact *>(&_altitudeFact),
@@ -158,6 +166,9 @@ SprayAreaComplexItem::SprayAreaComplexItem(PlanMasterController *masterControlle
         connect(MultiVehicleManager::instance(), &MultiVehicleManager::activeVehicleChanged,
                 this, &SprayAreaComplexItem::_trackVehicle);
         _trackVehicle(MultiVehicleManager::instance()->activeVehicle());
+        if (CustomPlugin *plugin = qobject_cast<CustomPlugin *>(QGCCorePlugin::instance())) {
+            plugin->sprayPlanAreaCreated(this);   // the Fly view's Resume Job card follows this item
+        }
     }
 
     if (!kmlOrShpFile.isEmpty()) {
@@ -532,6 +543,40 @@ void SprayAreaComplexItem::_rebuildMission()
 
     emit missionUpdated();
     emit readyForSaveStateChanged();
+    _updateTrips();
+}
+
+void SprayAreaComplexItem::_updateTrips()
+{
+    _trips = {};
+    _tripStopsVariant.clear();
+    if (_result.valid && _route.pointCount() >= 2) {
+        spray::TripInput in;
+        in.route          = _routeReversed ? _route.reversed() : _route;
+        const QGeoCoordinate home = takeoffPoint();
+        in.takeoff        = (hasTakeoff() && home.isValid()) ? spray::LatLon { home.latitude(), home.longitude() }
+                                                            : in.route.points().front();
+        in.swathM         = _swathWidthFact.rawValue().toDouble();
+        in.volumePerM2    = _applicationRateFact.rawValue().toDouble() / 4046.8564224;   // gal/ac -> gal/m2
+        in.tankVolume     = _tankCapacityFact.rawValue().toDouble();
+        in.batteryS       = _batteryMinutesFact.rawValue().toDouble() * 60.0;
+        in.spraySpeedMS   = _speedFact.rawValue().toDouble();
+        in.transitSpeedMS = _transitSpeedFact.rawValue().toDouble();
+        in.transitAltM    = qMax(_transitAltitudeFact.rawValue().toDouble(), _altitudeFact.rawValue().toDouble());
+        _trips = spray::estimateTrips(in);
+        for (const spray::LatLon &p : _trips.stops) {
+            _tripStopsVariant.append(QVariant::fromValue(QGeoCoordinate(p.lat, p.lon)));
+        }
+    }
+    emit tripsChanged();
+}
+
+QString SprayAreaComplexItem::tripsLimitedBy() const
+{
+    if (!_trips.valid || _trips.trips < 2) {
+        return QString();
+    }
+    return _trips.tankTrips >= _trips.batteryTrips ? QStringLiteral("tank") : QStringLiteral("battery");
 }
 
 void SprayAreaComplexItem::_transitEdited(int oldLastSeq)

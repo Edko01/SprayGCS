@@ -119,7 +119,11 @@ Rectangle {
                 model: _sprayArea ? [
                     { value: _sprayArea.sprayedAcresEst.toFixed(1),  caption: _sprayArea.hasSprayed ? qsTr("acres left") : qsTr("acres sprayed") },
                     { value: _sprayArea.estimatedVolume.toFixed(1),  caption: qsTr("gal product") },
-                    { value: _sprayArea.estimatedMinutes.toFixed(0), caption: qsTr("min flight") },
+                    { value: _sprayArea.tripsValid ? _sprayArea.estimatedTrips : "?",
+                      caption: _sprayArea.estimatedTrips === 1 ? qsTr("trip") : (_sprayArea.hasSprayed ? qsTr("trips left") : qsTr("trips")) },
+                    { value: (_sprayArea.tripsValid ? _sprayArea.allTripsMinutes : _sprayArea.estimatedMinutes).toFixed(0),
+                      caption: qsTr("min flying") },
+                    { value: _sprayArea.fullLoadGallons.toFixed(1),  caption: qsTr("gal per fill") },
                     { value: _sprayArea.passCount + (_sprayArea.headlandPass.rawValue ? "+1" : ""), caption: qsTr("passes") }
                 ] : []
 
@@ -146,6 +150,30 @@ Rectangle {
                         }
                     }
                 }
+            }
+        }
+
+        // Trips: which runs out first, and how much to fill.
+        QGCLabel {
+            Layout.fillWidth:    true
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode:            Text.WordWrap
+            color:               _sprayArea && !_sprayArea.tripsValid ? qgcPal.warningText : qgcPal.text
+            visible:             _sprayArea !== null && _sprayArea.pathValid
+            text: {
+                if (!_sprayArea) {
+                    return ""
+                }
+                if (!_sprayArea.tripsValid) {
+                    return qsTr("One battery can't get to this field and back. Check Flight time per battery (Drone tab).")
+                }
+                if (_sprayArea.estimatedTrips < 2) {
+                    return qsTr("One trip: fill %1 gal.").arg(_sprayArea.lastLoadGallons.toFixed(1))
+                }
+                return (_sprayArea.tripsLimitedBy === "tank"
+                        ? qsTr("The tank runs out first. Fill %1 gal each trip, %2 gal for the last.")
+                        : qsTr("The battery runs out first. About %1 gal a trip; fill %2 gal for the last."))
+                       .arg(_sprayArea.fullLoadGallons.toFixed(1)).arg(_sprayArea.lastLoadGallons.toFixed(1))
             }
         }
 
