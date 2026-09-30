@@ -1008,13 +1008,13 @@ Result generate(const std::vector<LatLon>& boundary, const Settings& s)
                     continue;
                 }
                 const XY  dir    { (b.x - a.x) / len, (b.y - a.y) / len };
-                const XY  across { dir.y, -dir.x };
+                const XY  sideways { dir.y, -dir.x };   // across the ring here
                 const int steps  = std::max(1, static_cast<int>(std::ceil(len / ds)));
                 for (int i = 0; i < steps; ++i) {
                     const double t = static_cast<double>(i) / steps;
                     const XY     p { a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t };
                     samples.push_back(p);
-                    need.push_back(coverage->needsSpray(p, across, s.swathWidthM));
+                    need.push_back(coverage->needsSpray(p, sideways, s.swathWidthM));
                 }
             }
             const size_t m = samples.size();
