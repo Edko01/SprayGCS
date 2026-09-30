@@ -476,7 +476,6 @@ Rectangle {
             Repeater {
                 model: [ { tab: "basic",    text: qsTr("Basic") },
                          { tab: "transit",  text: qsTr("Transit") },
-                         { tab: "drone",    text: qsTr("Drone") },
                          { tab: "advanced", text: qsTr("Advanced") } ]
 
                 delegate: Rectangle {
@@ -821,7 +820,102 @@ Rectangle {
                     { label: qsTr("Transit speed"),  fact: missionItem.transitSpeed,    step: 0.5 }
                 ]
 
-                delegate: spinRowComponent
+                delegate: Item {
+                    id: transitRow
+
+                    readonly property var  _fact: modelData.fact
+                    readonly property real _step: modelData.step
+                    property int           _stepDir: 0
+
+                    function _stepOnce(dir) {
+                        var v = Math.round((_fact.value + dir * _step) / _step) * _step
+                        v = Math.min(_fact.max, Math.max(_fact.min, v))
+                        if (Math.abs(_fact.value - v) > 1e-9) {
+                            _fact.value = v
+                        }
+                    }
+                    function _startStep(dir) {
+                        _stepDir = dir
+                        _stepOnce(dir)
+                        transitStepTimer.interval = 400   // hold to repeat
+                        transitStepTimer.restart()
+                    }
+
+                    Layout.fillWidth: true
+                    implicitHeight:   _rowHeight
+
+                    Timer {
+                        id:          transitStepTimer
+                        repeat:      true
+                        onTriggered: {
+                            interval = 100
+                            transitRow._stepOnce(transitRow._stepDir)
+                        }
+                    }
+
+                    QGCLabel {
+                        anchors.left:           parent.left
+                        anchors.right:          transitControls.left
+                        anchors.rightMargin:    _margin
+                        anchors.verticalCenter: parent.verticalCenter
+                        text:                   modelData.label
+                        font.pointSize:         ScreenTools.mediumFontPointSize
+                        elide:                  Text.ElideRight
+                    }
+
+                    Row {
+                        id:                     transitControls
+                        anchors.right:          parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing:                _margin / 2
+
+                        FactTextField {
+                            anchors.verticalCenter: parent.verticalCenter
+                            width:                  _fieldWidth
+                            fact:                   transitRow._fact
+                            showUnits:              true
+                        }
+                        // Up over down, like a spin box, so the name keeps its room.
+                        Column {
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing:                2
+
+                            Repeater {
+                                model: [ { dir:  1, icon: "/InstrumentValueIcons/cheveron-up.svg" },
+                                         { dir: -1, icon: "/InstrumentValueIcons/cheveron-down.svg" } ]
+                                delegate: transitArrow
+                            }
+                        }
+                    }
+
+                    Component {
+                        id: transitArrow
+
+                        Rectangle {
+                            width:           ScreenTools.defaultFontPixelHeight * 1.8
+                            height:          (_rowHeight - 2) / 2
+                            radius:          _radius
+                            color:           transitArrowArea.pressed ? _accent : qgcPal.windowShade
+                            Accessible.name: modelData.dir < 0 ? qsTr("Decrease") : qsTr("Increase")
+
+                            QGCColoredImage {
+                                anchors.centerIn:  parent
+                                height:            parent.height * 0.7
+                                width:             height
+                                sourceSize.height: height
+                                source:            modelData.icon
+                                color:             transitArrowArea.pressed ? _accentText : qgcPal.text
+                            }
+                            MouseArea {
+                                id:           transitArrowArea
+                                anchors.fill: parent
+                                onPressed:    transitRow._startStep(modelData.dir)
+                                onReleased:   transitStepTimer.stop()
+                                onCanceled:   transitStepTimer.stop()
+                            }
+                        }
+                    }
+                }
             }
 
             // Edit the entry side (A) or the planned route (B) on the map.
@@ -925,28 +1019,6 @@ Rectangle {
             }
         }
 
-        // ---- Drone: tank and battery, for the trip estimate -------------------------
-        ColumnLayout {
-            Layout.fillWidth: true
-            spacing:          0
-            visible:          missionItem.fieldPolygon.isValid && _tab === "drone" && !missionItem.boundaryEditMode
-
-            Repeater {
-                model: [
-                    { label: qsTr("Tank size"),               fact: missionItem.tankCapacity,   step: 0.1 },
-                    { label: qsTr("Flight time per battery"), fact: missionItem.batteryMinutes, step: 1 }
-                ]
-                delegate: spinRowComponent
-            }
-
-            QGCLabel {
-                Layout.fillWidth: true
-                Layout.topMargin: _margin / 2
-                wrapMode:         Text.WordWrap
-                text:             qsTr("Saved for all jobs. A job usually takes many trips: the drone sprays until the tank or battery runs out, comes back for a refill or battery swap, then resumes where it stopped. These set the trip estimate. Flight time is with a full tank, until the drone should head home.")
-            }
-        }
-
         // ---- Advanced -----------------------------------------------------------
         ColumnLayout {
             Layout.fillWidth: true
@@ -990,109 +1062,6 @@ Rectangle {
                 enabled:          missionItem.hasRouteEdits
                 visible:          missionItem.pathValid
                 onClicked:        missionItem.resetRouteEdits()
-            }
-        }
-    }
-
-    // A setting row: name, value box and up / down arrows (tap: one step, hold: repeat).
-    // Model: { label, fact, step }.
-    Component {
-        id: spinRowComponent
-
-        Item {
-            id: spinRow
-
-            readonly property var  _fact: modelData.fact
-            readonly property real _step: modelData.step
-            property int           _stepDir: 0
-
-            function _stepOnce(dir) {
-                var v = Math.round((_fact.value + dir * _step) / _step) * _step
-                v = Math.min(_fact.max, Math.max(_fact.min, v))
-                if (Math.abs(_fact.value - v) > 1e-9) {
-                    _fact.value = v
-                }
-            }
-            function _startStep(dir) {
-                _stepDir = dir
-                _stepOnce(dir)
-                stepTimer.interval = 400   // hold to repeat
-                stepTimer.restart()
-            }
-
-            Layout.fillWidth: true
-            implicitHeight:   _rowHeight
-
-            Timer {
-                id:          stepTimer
-                repeat:      true
-                onTriggered: {
-                    interval = 100
-                    spinRow._stepOnce(spinRow._stepDir)
-                }
-            }
-
-            QGCLabel {
-                anchors.left:           parent.left
-                anchors.right:          spinControls.left
-                anchors.rightMargin:    _margin
-                anchors.verticalCenter: parent.verticalCenter
-                text:                   modelData.label
-                font.pointSize:         ScreenTools.mediumFontPointSize
-                elide:                  Text.ElideRight
-            }
-
-            Row {
-                id:                     spinControls
-                anchors.right:          parent.right
-                anchors.verticalCenter: parent.verticalCenter
-                spacing:                _margin / 2
-
-                FactTextField {
-                    anchors.verticalCenter: parent.verticalCenter
-                    width:                  _fieldWidth
-                    fact:                   spinRow._fact
-                    showUnits:              true
-                }
-                // Up over down, like a spin box, so the name keeps its room.
-                Column {
-                    anchors.verticalCenter: parent.verticalCenter
-                    spacing:                2
-
-                    Repeater {
-                        model: [ { dir:  1, icon: "/InstrumentValueIcons/cheveron-up.svg" },
-                                 { dir: -1, icon: "/InstrumentValueIcons/cheveron-down.svg" } ]
-                        delegate: spinArrow
-                    }
-                }
-            }
-
-            Component {
-                id: spinArrow
-
-                Rectangle {
-                    width:           ScreenTools.defaultFontPixelHeight * 1.8
-                    height:          (_rowHeight - 2) / 2
-                    radius:          _radius
-                    color:           spinArrowArea.pressed ? _accent : qgcPal.windowShade
-                    Accessible.name: modelData.dir < 0 ? qsTr("Decrease") : qsTr("Increase")
-
-                    QGCColoredImage {
-                        anchors.centerIn:  parent
-                        height:            parent.height * 0.7
-                        width:             height
-                        sourceSize.height: height
-                        source:            modelData.icon
-                        color:             spinArrowArea.pressed ? _accentText : qgcPal.text
-                    }
-                    MouseArea {
-                        id:           spinArrowArea
-                        anchors.fill: parent
-                        onPressed:    spinRow._startStep(modelData.dir)
-                        onReleased:   stepTimer.stop()
-                        onCanceled:   stepTimer.stop()
-                    }
-                }
             }
         }
     }
