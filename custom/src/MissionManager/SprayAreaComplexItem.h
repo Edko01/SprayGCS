@@ -125,6 +125,9 @@ public:
     // Until the onboard Spray Controller reports the pump, it's taken from the
     // plan: on while the drone flies a spray section in Mission.
     Q_PROPERTY(bool           pumpOn               READ pumpOn               NOTIFY pumpOnChanged)
+    /// The job was interrupted and not resumed yet: there's a breakpoint, or
+    /// SprayGCS's Return replaced the drone's mission with the way back.
+    Q_PROPERTY(bool           awaitingResume       READ awaitingResume       NOTIFY awaitingResumeChanged)
     /// The connected drone's top horizontal speed (PX4 MPC_XY_VEL_MAX), m/s; 0 if unknown.
     /// Faster spray or transit speeds are flown at this.
     Q_PROPERTY(double         droneMaxSpeed        READ droneMaxSpeed        NOTIFY droneMaxSpeedChanged)
@@ -203,6 +206,7 @@ public:
     QString        breakpointText()       const;
     QVariantList   breakpointStrips()     const { return _bpStripsVariant; }
     bool           pumpOn()               const { return _pumpOn; }
+    bool           awaitingResume()       const { return _bpValid || _returnedMidJob; }
     double         droneMaxSpeed()        const { return _droneMaxSpeed; }
     bool         canUndo()          const { return _changePending || !_undoStack.isEmpty(); }
     bool         canRedo()          const { return !_changePending && !_redoStack.isEmpty(); }
@@ -330,6 +334,7 @@ signals:
     void sprayedChanged();
     void breakpointChanged();
     void pumpOnChanged();
+    void awaitingResumeChanged();
     void droneMaxSpeedChanged();
     void coverageReset();                                 ///< rebuild from coverageSegments()
     void coverageSegmentStarted();                        ///< the pump came on: a new path
@@ -407,6 +412,7 @@ private:
     void _setPumpOn(bool on);
     void _continueAfterUpload(Vehicle *vehicle);      ///< in the air: carry on from where it was, not from takeoff
     void _updateDroneMaxSpeed();
+    void _setReturnedMidJob(bool returned);
     void _emitRouteChanged(int oldLastSeq);
     void _rebuildRouteVariants();
 
@@ -479,6 +485,7 @@ private:
     QDateTime                     _bpTime;
     QVariantList                  _bpStripsVariant;
     bool                          _pumpOn = false;
+    bool                          _returnedMidJob = false;  ///< the drone's mission is SprayGCS's way back, not this plan
     double                        _droneMaxSpeed = 0.0;
     QMetaObject::Connection       _maxSpeedConnection;      ///< to the drone's MPC_XY_VEL_MAX
     std::vector<QList<QGeoCoordinate>> _coverage;       ///< sprayed track, one path per pump-on stretch

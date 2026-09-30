@@ -21,9 +21,12 @@ Item {
     property bool _vehicleWasArmed:                 false
     property bool _vehicleInMissionFlightMode:      _activeVehicle ? (_activeVehicle.flightMode === _activeVehicle.missionFlightMode) : false
     property bool _vehicleWasInMissionFlightMode:   false
-    property bool _showMissionCompleteDialog:       _vehicleWasArmed && _vehicleWasInMissionFlightMode &&
+    property bool _showMissionCompleteDialog:       _vehicleWasArmed && _vehicleWasInMissionFlightMode && !_sprayJobAwaitingResume &&
                                                     (missionController.containsItems || geoFenceController.containsItems || rallyPointController.containsItems ||
                                                      (_activeVehicle ? _activeVehicle.cameraTriggerPoints.count !== 0 : false))
+    // SprayGCS: after a Return or refill stop mid-job the flight isn't complete; the Fly view offers Resume Job instead.
+    property var  _sprayPlanArea:                   QGroundControl.corePlugin.sprayPlanArea !== undefined ? QGroundControl.corePlugin.sprayPlanArea : null
+    property bool _sprayJobAwaitingResume:          _sprayPlanArea ? _sprayPlanArea.awaitingResume : false
 
     on_VehicleArmedChanged: {
         if (_vehicleArmed) {

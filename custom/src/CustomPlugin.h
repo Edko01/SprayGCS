@@ -73,6 +73,11 @@ public:
     /// string if it did, otherwise why not (then use the drone's own Return).
     Q_INVOKABLE QString sprayReturn();
 
+    /// On the ground after an interruption (refill, battery swap): plan what's
+    /// left of the job from its breakpoint and upload it. Returns an empty
+    /// string if it did, otherwise why not.
+    Q_INVOKABLE QString sprayResumeJob();
+
     QObject *sprayPlanArea() const;
     /// Called by a Plan view Spray Area when it's created.
     void sprayPlanAreaCreated(QObject *area);

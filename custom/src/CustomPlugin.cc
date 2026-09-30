@@ -379,6 +379,34 @@ QString CustomPlugin::sprayReturn()
     return item->returnViaEntrySide();
 }
 
+QString CustomPlugin::sprayResumeJob()
+{
+    SprayAreaComplexItem *item = SprayAreaComplexItem::planViewItem();
+    if (!item) {
+        return tr("No spray plan is open.");
+    }
+    Vehicle *vehicle = MultiVehicleManager::instance()->activeVehicle();
+    if (!vehicle) {
+        return tr("No drone is connected.");
+    }
+    if (vehicle->flying()) {
+        return tr("Land the drone first.");
+    }
+    PlanMasterController *master = item->masterController();
+    if (!master || master->offline() || master->syncInProgress()) {
+        return tr("Can't upload to the drone right now. Try again in a moment.");
+    }
+    if (item->hasBreakpoint()) {
+        item->resumeFromBreakpoint();
+    }
+    if (item->allSprayed()) {
+        return tr("Everything in this field has been sprayed.");
+    }
+    master->sendToVehicle();
+    QGC::showAppMessage(tr("Uploading what's left of the job. When it's done, start the mission."));
+    return QString();
+}
+
 QObject *CustomPlugin::sprayPlanArea() const
 {
     return SprayAreaComplexItem::planViewItem();

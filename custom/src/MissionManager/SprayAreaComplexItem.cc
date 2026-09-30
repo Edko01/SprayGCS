@@ -1412,10 +1412,22 @@ void SprayAreaComplexItem::_trackVehicle(Vehicle *vehicle)
     // from where the drone was.
     _trackConnections << connect(vehicle->missionManager(), &PlanManager::sendComplete, this, [this](bool error) {
         if (!error && !_returnUploading) {
+            _setReturnedMidJob(false);   // the drone has a plan again
             _applyReturnSettings(_trackedVehicle.data());
             _continueAfterUpload(_trackedVehicle.data());
         }
     });
+}
+
+void SprayAreaComplexItem::_setReturnedMidJob(bool returned)
+{
+    if (returned != _returnedMidJob) {
+        const bool wasAwaiting = awaitingResume();
+        _returnedMidJob = returned;
+        if (awaitingResume() != wasAwaiting) {
+            emit awaitingResumeChanged();
+        }
+    }
 }
 
 void SprayAreaComplexItem::_updateDroneMaxSpeed()
@@ -1743,6 +1755,7 @@ void SprayAreaComplexItem::_setBreakpoint(bool valid, const std::vector<spray::S
     _bpTime          = valid ? time : QDateTime();
     _bpStripsVariant = stripRectangles(_bpStrips);
     emit breakpointChanged();
+    emit awaitingResumeChanged();
 }
 
 QString SprayAreaComplexItem::breakpointText() const
@@ -1938,6 +1951,7 @@ QString SprayAreaComplexItem::returnViaEntrySide()
             QGC::showAppMessage(tr("Couldn't send the way back; the drone is using its own Return."));
             return;
         }
+        _setReturnedMidJob(true);
         target->setCurrentMissionSequence(1);
         target->setFlightMode(target->missionFlightMode());
         QGC::showAppMessage(tr("Returning through the entry side, then straight to takeoff. A breakpoint is saved where spraying stopped, so the job can be resumed."));
