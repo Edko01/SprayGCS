@@ -14,6 +14,7 @@
 #include "AppSettings.h"
 #include "SettingsManager.h"
 #include "VideoSettings.h"
+#include "PlanViewSettings.h"
 #include "MultiVehicleManager.h"
 #include "Vehicle.h"
 #include "ParameterManager.h"
@@ -129,6 +130,14 @@ void CustomPlugin::adjustSettingMetaData(const QString& settingsGroup, FactMetaD
         // The pilot can still switch it on (Video Stream Enabled).
         if (metaData.name() == VideoSettings::streamEnabledName) {
             metaData.setRawDefaultValue(false);
+            return;
+        }
+    } else if (settingsGroup == PlanViewSettings::settingsGroup) {
+        // SprayGCS: condition gates only change QGC's camera Survey and Corridor
+        // Scan patterns; spray plans don't use them. Hide the option (off).
+        if (metaData.name() == PlanViewSettings::useConditionGateName) {
+            metaData.setRawDefaultValue(false);
+            userVisible = false;
             return;
         }
     }
