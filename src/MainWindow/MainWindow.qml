@@ -343,34 +343,30 @@ ApplicationWindow {
         visible: QGroundControl.settingsManager.flyViewSettings.showLogReplayStatusBar.rawValue
     }
 
-    MessageDialog {
-        id:                 showTouchAreasNotification
-        title:              qsTr("Debug Touch Areas")
-        text:               qsTr("Touch Area display toggled")
-        buttons:            MessageDialog.Ok
-    }
-
-    MessageDialog {
-        id:                 advancedModeOnConfirmation
-        title:              qsTr("Advanced Mode")
-        text:               QGroundControl.corePlugin.showAdvancedUIMessage
-        buttons:            MessageDialog.Yes | MessageDialog.No
-        onButtonClicked: function (button, role) {
-            if (button === MessageDialog.Yes) {
-                QGroundControl.corePlugin.showAdvancedUI = true
-            }
+    // SprayGCS: these use the app's own dialog; the system MessageDialog came
+    // out white on white with SprayGCS's colors.
+    QtObject {
+        id: showTouchAreasNotification
+        function open() {
+            _showMessageDialogWorker(mainWindow, qsTr("Debug Touch Areas"), qsTr("Touch Area display toggled"))
         }
     }
 
-    MessageDialog {
-        id:                 advancedModeOffConfirmation
-        title:              qsTr("Advanced Mode")
-        text:               qsTr("Turn off Advanced Mode?")
-        buttons:            MessageDialog.Yes | MessageDialog.No
-        onButtonClicked: function (button, role) {
-            if (button === MessageDialog.Yes) {
-                QGroundControl.corePlugin.showAdvancedUI = false
-            }
+    QtObject {
+        id: advancedModeOnConfirmation
+        function open() {
+            _showMessageDialogWorker(mainWindow, qsTr("Advanced Mode"), QGroundControl.corePlugin.showAdvancedUIMessage,
+                                     Dialog.Yes | Dialog.No,
+                                     function() { QGroundControl.corePlugin.showAdvancedUI = true })
+        }
+    }
+
+    QtObject {
+        id: advancedModeOffConfirmation
+        function open() {
+            _showMessageDialogWorker(mainWindow, qsTr("Advanced Mode"), qsTr("Turn off Advanced Mode?"),
+                                     Dialog.Yes | Dialog.No,
+                                     function() { QGroundControl.corePlugin.showAdvancedUI = false })
         }
     }
 
