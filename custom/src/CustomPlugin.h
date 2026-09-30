@@ -62,6 +62,8 @@ class CustomPlugin : public QGCCorePlugin
 
     /// The Plan view's Spray Area (the Fly view shows its field and sprayed trail), or null.
     Q_PROPERTY(QObject *sprayPlanArea READ sprayPlanArea NOTIFY sprayPlanAreaChanged)
+    /// Battery level and failsafe levels for the Fly view's battery bar.
+    Q_PROPERTY(QObject *sprayBatteryBar READ sprayBatteryBar CONSTANT)
 
 public:
     explicit CustomPlugin(QObject *parent = nullptr);
@@ -79,6 +81,7 @@ public:
     Q_INVOKABLE QString sprayResumeJob();
 
     QObject *sprayPlanArea() const;
+    QObject *sprayBatteryBar() const;
     /// Called by a Plan view Spray Area when it's created.
     void sprayPlanAreaCreated(QObject *area);
 
@@ -118,6 +121,7 @@ private:
     QString _sprayResumeJob();   ///< sprayResumeJob() without the message
 
     CustomOptions *_options = nullptr;
+    mutable class SprayBatteryBar *_batteryBar = nullptr;   ///< made when the Fly view first asks
     QQmlApplicationEngine *_qmlEngine = nullptr;
     class CustomOverrideInterceptor *_urlInterceptor = nullptr;
 };

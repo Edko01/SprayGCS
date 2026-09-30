@@ -3,6 +3,7 @@
 #include "PerimeterScanComplexItem.h"
 #include "PerimeterScanPlanCreator.h"
 #include "SprayAreaComplexItem.h"
+#include "FlyView/SprayBatteryBar.h"
 #include "SprayAreaPlanCreator.h"
 #include "MissionController.h"
 #include "PlanMasterController.h"
@@ -436,6 +437,14 @@ QString CustomPlugin::_sprayResumeJob()
     }
     master->sendToVehicle();
     return QString();
+}
+
+QObject *CustomPlugin::sprayBatteryBar() const
+{
+    if (!_batteryBar) {
+        _batteryBar = new SprayBatteryBar(const_cast<CustomPlugin *>(this));
+    }
+    return _batteryBar;
 }
 
 QObject *CustomPlugin::sprayPlanArea() const
