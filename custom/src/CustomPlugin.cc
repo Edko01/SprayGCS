@@ -406,6 +406,13 @@ QString CustomPlugin::sprayReturn()
 
 QString CustomPlugin::sprayResumeJob()
 {
+    const QString problem = _sprayResumeJob();
+    QGC::showAppMessage(problem.isEmpty() ? tr("Uploading what's left of the job. When it's done, start the mission.") : problem);
+    return problem;
+}
+
+QString CustomPlugin::_sprayResumeJob()
+{
     SprayAreaComplexItem *item = SprayAreaComplexItem::planViewItem();
     if (!item) {
         return tr("No spray plan is open.");
@@ -428,7 +435,6 @@ QString CustomPlugin::sprayResumeJob()
         return tr("Everything in this field has been sprayed.");
     }
     master->sendToVehicle();
-    QGC::showAppMessage(tr("Uploading what's left of the job. When it's done, start the mission."));
     return QString();
 }
 
