@@ -379,6 +379,19 @@ QString CustomPlugin::sprayReturn()
     return item->returnViaEntrySide();
 }
 
+QObject *CustomPlugin::sprayPlanArea() const
+{
+    return SprayAreaComplexItem::planViewItem();
+}
+
+void CustomPlugin::sprayPlanAreaCreated(QObject *area)
+{
+    if (area) {
+        connect(area, &QObject::destroyed, this, &CustomPlugin::sprayPlanAreaChanged);
+    }
+    emit sprayPlanAreaChanged();
+}
+
 QVariantList CustomPlugin::complexMissionItemNames(Vehicle *vehicle)
 {
     // Start with the standard set, then append our custom item.

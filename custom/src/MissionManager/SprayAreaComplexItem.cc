@@ -2,6 +2,7 @@
 
 #include "AppMessages.h"
 #include "AppSettings.h"
+#include "CustomPlugin.h"
 #include "JsonParsing.h"
 #include "MissionFlightStatus.h"
 #include "MissionController.h"
@@ -158,6 +159,9 @@ SprayAreaComplexItem::SprayAreaComplexItem(PlanMasterController *masterControlle
         connect(MultiVehicleManager::instance(), &MultiVehicleManager::activeVehicleChanged,
                 this, &SprayAreaComplexItem::_trackVehicle);
         _trackVehicle(MultiVehicleManager::instance()->activeVehicle());
+        if (CustomPlugin *plugin = qobject_cast<CustomPlugin *>(QGCCorePlugin::instance())) {
+            plugin->sprayPlanAreaCreated(this);   // the Fly view shows this item's field and sprayed trail
+        }
     }
 
     if (!kmlOrShpFile.isEmpty()) {
@@ -1357,6 +1361,7 @@ void SprayAreaComplexItem::_trackVehicle(Vehicle *vehicle)
     _trackIndex     = -1;
     _trackPos       = QGeoCoordinate();
     _trackInMission = false;
+    _setPumpOn(false);
     if (!vehicle || !vehicle->missionManager()) {
         return;
     }
@@ -1380,6 +1385,7 @@ void SprayAreaComplexItem::_trackVehicle(Vehicle *vehicle)
         } else if (!wasInMission && _trackInMission && _bpValid && _droneFliesThisPlan(v)) {
             discardBreakpoint();   // carrying on with the same mission: nothing to resume
         }
+        _updateCoverage(v);
     };
     _trackConnections << connect(vehicle, &Vehicle::coordinateChanged, this, update);
     _trackConnections << connect(vehicle, &Vehicle::flightModeChanged, this, update);
@@ -1694,6 +1700,85 @@ void SprayAreaComplexItem::discardBreakpoint()
     _noteChange();
 }
 
+bool SprayAreaComplexItem::_missionPumpOn(Vehicle *vehicle) const
+{
+    // The pump follows the plan's spray markers: on while the drone flies in
+    // Mission towards a waypoint that comes after a spray-on marker.
+    if (!vehicle || !vehicle->missionManager() || !vehicle->flying()
+            || vehicle->flightMode() != vehicle->missionFlightMode()) {
+        return false;
+    }
+    MissionManager *manager = vehicle->missionManager();
+    const int       current = manager->currentIndex();
+    if (current < 0) {
+        return false;
+    }
+    bool on = false;
+    for (const MissionItem *item : manager->missionItems()) {
+        if (item->sequenceNumber() >= current) {
+            break;
+        }
+        if (item->command() == MAV_CMD_DO_SET_ACTUATOR) {
+            on = item->param1() > 0.5;
+        }
+    }
+    return on;
+}
+
+void SprayAreaComplexItem::_setPumpOn(bool on)
+{
+    if (on == _pumpOn) {
+        return;
+    }
+    _pumpOn = on;
+    emit pumpOnChanged();
+    if (on) {
+        _coverage.emplace_back();
+        emit coverageSegmentStarted();
+    }
+}
+
+void SprayAreaComplexItem::_updateCoverage(Vehicle *vehicle)
+{
+    _setPumpOn(_missionPumpOn(vehicle));
+    const QGeoCoordinate here = vehicle ? vehicle->coordinate() : QGeoCoordinate();
+    if (!_pumpOn || !here.isValid() || _coverage.empty()) {
+        return;
+    }
+    QList<QGeoCoordinate> &path = _coverage.back();
+    const qsizetype        n    = path.count();
+    if (n >= 1 && path[n - 1].distanceTo(here) < 0.5) {
+        return;
+    }
+    if (n >= 2) {
+        // Still going straight: move the path's end instead of adding a point.
+        const QGeoCoordinate a        = path[n - 2];
+        const QGeoCoordinate b        = path[n - 1];
+        const double         ab       = a.distanceTo(b);
+        const double         offLine  = ab * qSin(qDegreesToRadians(a.azimuthTo(here) - a.azimuthTo(b)));
+        if (a.distanceTo(here) > ab && qAbs(offLine) < 0.3) {
+            path[n - 1] = here;
+            emit coverageLastPointMoved(here);
+            return;
+        }
+    }
+    path.append(here);
+    emit coveragePointAdded(here);
+}
+
+QVariantList SprayAreaComplexItem::coverageSegments() const
+{
+    QVariantList result;
+    for (const QList<QGeoCoordinate> &path : _coverage) {
+        QVariantList points;
+        for (const QGeoCoordinate &c : path) {
+            points.append(QVariant::fromValue(c));
+        }
+        result.append(QVariant(points));
+    }
+    return result;
+}
+
 QPointer<SprayAreaComplexItem> SprayAreaComplexItem::s_planViewItem;
 
 SprayAreaComplexItem *SprayAreaComplexItem::planViewItem()
@@ -1790,6 +1875,13 @@ QString SprayAreaComplexItem::returnViaEntrySide()
 
 void SprayAreaComplexItem::clearSprayed()
 {
+    if (!_coverage.empty()) {
+        _coverage.clear();
+        if (_pumpOn) {
+            _coverage.emplace_back();   // keep recording the stretch in progress
+        }
+        emit coverageReset();
+    }
     if (_sprayed.empty() && !_hasResumeFrom) {
         return;
     }
@@ -2201,6 +2293,22 @@ void SprayAreaComplexItem::save(QJsonArray &missionItems)
         breakpoint[QStringLiteral("time")]   = _bpTime.toString(Qt::ISODate);
         saveObject[_jsonBreakpointKey] = breakpoint;
     }
+    // The sprayed track (the Fly view's trail), kept with the job.
+    QJsonArray coverage;
+    for (const QList<QGeoCoordinate> &path : _coverage) {
+        if (path.count() < 2) {
+            continue;
+        }
+        QJsonArray points;
+        for (const QGeoCoordinate &c : path) {
+            points.append(c.latitude());
+            points.append(c.longitude());
+        }
+        coverage.append(points);
+    }
+    if (!coverage.isEmpty()) {
+        saveObject[_jsonCoverageKey] = coverage;
+    }
 
     missionItems.append(saveObject);
 }
@@ -2307,6 +2415,21 @@ bool SprayAreaComplexItem::load(const QJsonObject &complexObject,
     } else {
         _setBreakpoint(false, {}, {}, QString(), QDateTime());
     }
+    _coverage.clear();
+    for (const QJsonValue &value : complexObject[_jsonCoverageKey].toArray()) {
+        const QJsonArray      points = value.toArray();
+        QList<QGeoCoordinate> path;
+        for (qsizetype i = 0; i + 1 < points.count(); i += 2) {
+            path.append(QGeoCoordinate(points[i].toDouble(), points[i + 1].toDouble()));
+        }
+        if (path.count() >= 2) {
+            _coverage.push_back(path);
+        }
+    }
+    if (_pumpOn) {
+        _coverage.emplace_back();   // the stretch in progress goes on in a path of its own
+    }
+    emit coverageReset();
 
     _fieldPolygon.clear();
     if (!_fieldPolygon.loadFromJson(complexObject, true /* required */, errorString)) {

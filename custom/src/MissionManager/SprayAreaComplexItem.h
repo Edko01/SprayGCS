@@ -121,6 +121,10 @@ public:
     Q_PROPERTY(QGeoCoordinate breakpointCoordinate READ breakpointCoordinate NOTIFY breakpointChanged)
     Q_PROPERTY(QString        breakpointText       READ breakpointText       NOTIFY breakpointChanged)
     Q_PROPERTY(QVariantList   breakpointStrips     READ breakpointStrips     NOTIFY breakpointChanged)   ///< sprayed before the break
+    // Coverage: the drone's track while its pump is on, for the Fly view's sprayed trail.
+    // Until the onboard Spray Controller reports the pump, it's taken from the
+    // plan: on while the drone flies a spray section in Mission.
+    Q_PROPERTY(bool           pumpOn               READ pumpOn               NOTIFY pumpOnChanged)
 
     // Undo / redo of boundary, settings and route edits.
     Q_PROPERTY(bool         canUndo          READ canUndo          NOTIFY undoRedoChanged)
@@ -195,6 +199,7 @@ public:
     QGeoCoordinate breakpointCoordinate() const { return _bpValid ? QGeoCoordinate(_bpStop.lat, _bpStop.lon) : QGeoCoordinate(); }
     QString        breakpointText()       const;
     QVariantList   breakpointStrips()     const { return _bpStripsVariant; }
+    bool           pumpOn()               const { return _pumpOn; }
     bool         canUndo()          const { return _changePending || !_undoStack.isEmpty(); }
     bool         canRedo()          const { return !_changePending && !_redoStack.isEmpty(); }
 
@@ -211,6 +216,8 @@ public:
     /// Plan only what's left from the breakpoint (like Mark Sprayed So Far).
     Q_INVOKABLE void    resumeFromBreakpoint();
     Q_INVOKABLE void    discardBreakpoint();
+    /// The sprayed track so far: one path (list of coordinates) per stretch with the pump on.
+    Q_INVOKABLE QVariantList coverageSegments() const;
 
     /// Return (RTH) from SprayGCS for a mode A plan: the way it came in, backwards.
     /// Marks what's sprayed, then sends the drone inside the field to the point of
@@ -318,6 +325,11 @@ signals:
     void undoRedoChanged();
     void sprayedChanged();
     void breakpointChanged();
+    void pumpOnChanged();
+    void coverageReset();                                 ///< rebuild from coverageSegments()
+    void coverageSegmentStarted();                        ///< the pump came on: a new path
+    void coveragePointAdded(const QGeoCoordinate &coordinate);      ///< to the last path
+    void coverageLastPointMoved(const QGeoCoordinate &coordinate);  ///< of the last path
 
 private slots:
     void _setDirty();
@@ -385,6 +397,9 @@ private:
     void _setBreakpoint(bool valid, const std::vector<spray::Strip> &strips, const spray::LatLon &stop,
                         const QString &reason, const QDateTime &time);
     bool _droneFliesThisPlan(Vehicle *vehicle) const;
+    bool _missionPumpOn(Vehicle *vehicle) const;      ///< pump state the drone's mission calls for now
+    void _updateCoverage(Vehicle *vehicle);           ///< extend the sprayed track
+    void _setPumpOn(bool on);
     void _emitRouteChanged(int oldLastSeq);
     void _rebuildRouteVariants();
 
@@ -453,6 +468,8 @@ private:
     QString                       _bpReason;                ///< flight mode it went into
     QDateTime                     _bpTime;
     QVariantList                  _bpStripsVariant;
+    bool                          _pumpOn = false;
+    std::vector<QList<QGeoCoordinate>> _coverage;       ///< sprayed track, one path per pump-on stretch
     static QPointer<SprayAreaComplexItem> s_planViewItem;
 
     // Undo / redo. Changes are grouped: a drag, typing, or a traced boundary
@@ -496,6 +513,7 @@ private:
     static constexpr const char *_jsonSprayedKey         = "sprayed";        ///< [[latA, lonA, latB, lonB, widthM], ...] already sprayed
     static constexpr const char *_jsonResumeFromKey      = "resumeFrom";     ///< [lat, lon]: route starts at the waiting drone
     static constexpr const char *_jsonBreakpointKey      = "breakpoint";     ///< {strips, stop, reason, time}: where spraying stopped
+    static constexpr const char *_jsonCoverageKey        = "coverage";       ///< [[lat, lon, lat, lon, ...], ...]: sprayed track
 
     static constexpr double      kMinBufferM             = 0.9144;           ///< 3 ft
     static constexpr double      kMaxBufferM             = 50.0;

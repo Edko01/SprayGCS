@@ -189,6 +189,7 @@ qgc_set_qt_resource_alias(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PlanView/SprayPlanInfo.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PlanView/SprayMapTools.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PlanView/SprayJobPanel.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/PlanView/SprayFlyMapItems.qml
 )
 
 qt_add_qml_module(CustomPlanModule
@@ -203,6 +204,7 @@ qt_add_qml_module(CustomPlanModule
         ${CMAKE_CURRENT_SOURCE_DIR}/src/PlanView/SprayPlanInfo.qml
         ${CMAKE_CURRENT_SOURCE_DIR}/src/PlanView/SprayMapTools.qml
         ${CMAKE_CURRENT_SOURCE_DIR}/src/PlanView/SprayJobPanel.qml
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/PlanView/SprayFlyMapItems.qml
     NO_PLUGIN
 )
 

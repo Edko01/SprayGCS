@@ -60,6 +60,9 @@ class CustomPlugin : public QGCCorePlugin
 {
     Q_OBJECT
 
+    /// The Plan view's Spray Area (the Fly view shows its field and sprayed trail), or null.
+    Q_PROPERTY(QObject *sprayPlanArea READ sprayPlanArea NOTIFY sprayPlanAreaChanged)
+
 public:
     explicit CustomPlugin(QObject *parent = nullptr);
 
@@ -69,6 +72,15 @@ public:
     /// (through the entry side, then straight to takeoff). Returns an empty
     /// string if it did, otherwise why not (then use the drone's own Return).
     Q_INVOKABLE QString sprayReturn();
+
+    QObject *sprayPlanArea() const;
+    /// Called by a Plan view Spray Area when it's created.
+    void sprayPlanAreaCreated(QObject *area);
+
+signals:
+    void sprayPlanAreaChanged();
+
+public:
 
     // Overrides from QGCCorePlugin
 

@@ -245,4 +245,13 @@ Item {
             anchors.centerIn:   parent
         }
     }
+
+    // SprayGCS: the plan's field boundary and the sprayed trail on the map
+    // (only on the standard map; the preview GeoMap engine can't take map items).
+    Loader {
+        source: "qrc:/qml/Custom/Plan/SprayFlyMapItems.qml"
+        onLoaded: item.map = Qt.binding(function() {
+            return mapControl && typeof mapControl.addMapItem === "function" ? mapControl : null
+        })
+    }
 }
