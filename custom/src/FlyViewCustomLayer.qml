@@ -46,17 +46,16 @@ Item {
         leftEdgeBottomInset:    parentToolInsets.leftEdgeBottomInset
         rightEdgeTopInset:      parentToolInsets.rightEdgeTopInset
         rightEdgeCenterInset:   parentToolInsets.rightEdgeCenterInset
-        rightEdgeBottomInset:   parent.width - compassBackground.x
+        rightEdgeBottomInset:   Math.max(parentToolInsets.rightEdgeBottomInset, _hudTiles ? _hudTiles.width : 0)
         topEdgeLeftInset:       parentToolInsets.topEdgeLeftInset
-        // SprayGCS: the heading strip sits at the bottom centre, so it's a bottom
-        // inset. (Reporting it as a top inset, measured down to the strip, left
-        // the Fly view a sliver at the bottom to keep the drone in, so the map
-        // kept snapping the drone to the bottom centre.)
         topEdgeCenterInset:     parentToolInsets.topEdgeCenterInset
         topEdgeRightInset:      parentToolInsets.topEdgeRightInset
         bottomEdgeLeftInset:    parentToolInsets.bottomEdgeLeftInset
-        bottomEdgeCenterInset:  Math.max(parentToolInsets.bottomEdgeCenterInset, parent.height - compassBar.y)
-        bottomEdgeRightInset:   parent.height - attitudeIndicator.y
+        bottomEdgeCenterInset:  Math.max(parentToolInsets.bottomEdgeCenterInset, _hudTiles ? _hudTiles.height : 0)
+        bottomEdgeRightInset:   Math.max(parentToolInsets.bottomEdgeRightInset, _hudTiles ? _hudTiles.height : 0)
+
+        // SprayGCS: the HUD tiles sit bottom right; keep the drone out from behind them.
+        readonly property var _hudTiles: hudLoader.item && hudLoader.item.tiles.visible ? hudLoader.item.tiles : null
     }
 
     // This is an example of how you can use parent tool insets to position an element on the custom fly view layer
@@ -79,170 +78,15 @@ Item {
         property real leftEdgeCenterInset: visible ? x + width : 0
     }
 
-    //-------------------------------------------------------------------------
-    //-- Heading Indicator
-    Rectangle {
-        id:                         compassBar
-        height:                     ScreenTools.defaultFontPixelHeight * 1.5
-        width:                      ScreenTools.defaultFontPixelWidth  * 50
-        anchors.bottom:             parent.bottom
-        anchors.bottomMargin:       _toolsMargin
-        color:                      "#DEDEDE"
-        radius:                     2
-        clip:                       true
-        anchors.horizontalCenter:   parent.horizontalCenter
-        Repeater {
-            model: 720
-            QGCLabel {
-                function _normalize(degrees) {
-                    var a = degrees % 360
-                    if (a < 0) a += 360
-                    return a
-                }
-                property int _startAngle: modelData + 180 + _heading
-                property int _angle: _normalize(_startAngle)
-                anchors.verticalCenter: parent.verticalCenter
-                x:              visible ? ((modelData * (compassBar.width / 360)) - (width * 0.5)) : 0
-                visible:        _angle % 45 == 0
-                color:          "#75505565"
-                font.pointSize: ScreenTools.smallFontPointSize
-                text: {
-                    switch(_angle) {
-                    case 0:     return "N"
-                    case 45:    return "NE"
-                    case 90:    return "E"
-                    case 135:   return "SE"
-                    case 180:   return "S"
-                    case 225:   return "SW"
-                    case 270:   return "W"
-                    case 315:   return "NW"
-                    }
-                    return ""
-                }
-            }
-        }
-    }
-    Rectangle {
-        id:                         headingIndicator
-        height:                     ScreenTools.defaultFontPixelHeight
-        width:                      ScreenTools.defaultFontPixelWidth * 4
-        color:                      qgcPal.windowShadeDark
-        anchors.top:                compassBar.top
-        anchors.topMargin:          -headingIndicator.height / 2
-        anchors.horizontalCenter:   parent.horizontalCenter
-        QGCLabel {
-            text:                   _heading
-            color:                  qgcPal.text
-            font.pointSize:         ScreenTools.smallFontPointSize
-            anchors.centerIn:       parent
-        }
-    }
-    Image {
-        id:                         compassArrowIndicator
-        height:                     _indicatorsHeight
-        width:                      height
-        source:                     "/custom/img/compass_pointer.svg"
-        fillMode:                   Image.PreserveAspectFit
-        sourceSize.height:          height
-        anchors.top:                compassBar.bottom
-        anchors.topMargin:          -height / 2
-        anchors.horizontalCenter:   parent.horizontalCenter
-    }
-
-    Rectangle {
-        id:                     compassBackground
-        anchors.bottom:         attitudeIndicator.bottom
-        anchors.right:          attitudeIndicator.left
-        anchors.rightMargin:    -attitudeIndicator.width / 2
-        width:                  -anchors.rightMargin + compassBezel.width + (_toolsMargin * 2)
-        height:                 attitudeIndicator.height * 0.75
-        radius:                 2
-        color:                  qgcPal.window
-
-        Rectangle {
-            id:                     compassBezel
-            anchors.verticalCenter: parent.verticalCenter
-            anchors.leftMargin:     _toolsMargin
-            anchors.left:           parent.left
-            width:                  height
-            height:                 parent.height - (northLabelBackground.height / 2) - (headingLabelBackground.height / 2)
-            radius:                 height / 2
-            border.color:           qgcPal.text
-            border.width:           1
-            color:                  Qt.rgba(0,0,0,0)
-        }
-
-        Rectangle {
-            id:                         northLabelBackground
-            anchors.top:                compassBezel.top
-            anchors.topMargin:          -height / 2
-            anchors.horizontalCenter:   compassBezel.horizontalCenter
-            width:                      northLabel.contentWidth * 1.5
-            height:                     northLabel.contentHeight * 1.5
-            radius:                     ScreenTools.defaultFontPixelWidth  * 0.25
-            color:                      qgcPal.windowShade
-
-            QGCLabel {
-                id:                 northLabel
-                anchors.centerIn:   parent
-                text:               "N"
-                color:              qgcPal.text
-                font.pointSize:     ScreenTools.smallFontPointSize
-            }
-        }
-
-        Image {
-            id:                 headingNeedle
-            anchors.centerIn:   compassBezel
-            height:             compassBezel.height * 0.75
-            width:              height
-            source:             "/custom/img/compass_needle.svg"
-            fillMode:           Image.PreserveAspectFit
-            sourceSize.height:  height
-            transform: [
-                Rotation {
-                    origin.x:   headingNeedle.width  / 2
-                    origin.y:   headingNeedle.height / 2
-                    angle:      _heading
-                }]
-        }
-
-        Rectangle {
-            id:                         headingLabelBackground
-            anchors.top:                compassBezel.bottom
-            anchors.topMargin:          -height / 2
-            anchors.horizontalCenter:   compassBezel.horizontalCenter
-            width:                      headingLabel.contentWidth * 1.5
-            height:                     headingLabel.contentHeight * 1.5
-            radius:                     ScreenTools.defaultFontPixelWidth  * 0.25
-            color:                      qgcPal.windowShade
-
-            QGCLabel {
-                id:                 headingLabel
-                anchors.centerIn:   parent
-                text:               _heading
-                color:              qgcPal.text
-                font.pointSize:     ScreenTools.smallFontPointSize
-            }
-        }
-    }
-
-    Rectangle {
-        id:                     attitudeIndicator
-        anchors.bottomMargin:   _toolsMargin + parentToolInsets.bottomEdgeRightInset
-        anchors.rightMargin:    _toolsMargin
-        anchors.bottom:         parent.bottom
-        anchors.right:          parent.right
-        height:                 ScreenTools.defaultFontPixelHeight * 6
-        width:                  height
-        radius:                 height * 0.5
-        color:                  qgcPal.windowShade
-
-        CustomAttitudeWidget {
-            size:               parent.height * 0.95
-            vehicle:            _activeVehicle
-            showHeading:        false
-            anchors.centerIn:   parent
+    // SprayGCS: spray HUD (phase banner, bottom-right tiles). It replaces the
+    // heading tape, compass and attitude ball, and QGC's telemetry bar.
+    Loader {
+        id:             hudLoader
+        anchors.fill:   parent
+        source:         "qrc:/qml/Custom/Plan/SprayFlyHud.qml"
+        onLoaded: {
+            item.vehicle         = Qt.binding(function() { return _activeVehicle })
+            item.bannerTopMargin = Qt.binding(function() { return batteryBar.visible ? batteryBar.height : 0 })
         }
     }
 

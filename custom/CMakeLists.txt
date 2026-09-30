@@ -81,6 +81,7 @@ set(CUSTOM_QML_OVERRIDES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/CustomGuidedActionsController.qml"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/FlyViewCustomLayer.qml"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/FlyViewToolStripActionList.qml"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/FlyViewBottomRightRowLayout.qml"
 )
 set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/src/CustomGuidedActionsController.qml"
     PROPERTIES QT_RESOURCE_ALIAS "QGroundControl/FlyView/CustomGuidedActionsController.qml"
@@ -90,6 +91,9 @@ set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/src/FlyViewCustomLayer.
 )
 set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/src/FlyViewToolStripActionList.qml"
     PROPERTIES QT_RESOURCE_ALIAS "QGroundControl/FlyView/FlyViewToolStripActionList.qml"
+)
+set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/src/FlyViewBottomRightRowLayout.qml"
+    PROPERTIES QT_RESOURCE_ALIAS "QGroundControl/FlyView/FlyViewBottomRightRowLayout.qml"
 )
 qt_add_resources(${CMAKE_PROJECT_NAME} custom_qml_overrides
     PREFIX "/Custom/qml"
@@ -190,6 +194,7 @@ qgc_set_qt_resource_alias(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PlanView/SprayMapTools.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PlanView/SprayJobPanel.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PlanView/SprayFlyMapItems.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/FlyView/SprayFlyHud.qml
 )
 
 qt_add_qml_module(CustomPlanModule
@@ -205,6 +210,7 @@ qt_add_qml_module(CustomPlanModule
         ${CMAKE_CURRENT_SOURCE_DIR}/src/PlanView/SprayMapTools.qml
         ${CMAKE_CURRENT_SOURCE_DIR}/src/PlanView/SprayJobPanel.qml
         ${CMAKE_CURRENT_SOURCE_DIR}/src/PlanView/SprayFlyMapItems.qml
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/FlyView/SprayFlyHud.qml
     NO_PLUGIN
 )
 

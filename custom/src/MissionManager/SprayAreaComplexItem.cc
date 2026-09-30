@@ -51,6 +51,9 @@ SprayAreaComplexItem::SprayAreaComplexItem(PlanMasterController *masterControlle
 {
     _editorQml = QStringLiteral("qrc:/qml/Custom/Plan/SprayAreaEditor.qml");
 
+    // The HUD's route progress is matched to the drone's mission again after a route change.
+    connect(this, &SprayAreaComplexItem::missionUpdated, this, [this]() { _progressSeqsDirty = true; });
+
     // Any setting change regenerates the passes and marks the plan as modified.
     // The offset belongs to the field: a new Spray Area starts at 0 (a saved plan loads its own).
     _passOffsetFact.setRawValue(0.0);
@@ -1372,6 +1375,9 @@ void SprayAreaComplexItem::_trackVehicle(Vehicle *vehicle)
     if (ParameterManager *params = vehicle->parameterManager()) {
         _trackConnections << connect(params, &ParameterManager::parametersReadyChanged, this, &SprayAreaComplexItem::_updateDroneMaxSpeed);
     }
+    _progressSeqsDirty = true;
+    _trackConnections << connect(vehicle->missionManager(), &PlanManager::newMissionItemsAvailable, this, [this]() { _progressSeqsDirty = true; });
+    _trackConnections << connect(vehicle->missionManager(), &PlanManager::sendComplete, this, [this]() { _progressSeqsDirty = true; });
 
     // While the drone flies the mission, remember where it is; when it leaves
     // Mission mode (Hold, Return, a failsafe) the last fix is where it stopped,
@@ -1402,6 +1408,7 @@ void SprayAreaComplexItem::_trackVehicle(Vehicle *vehicle)
             discardBreakpoint();   // carrying on with the same mission: nothing to resume
         }
         _updateCoverage(v);
+        _updateProgress(v);
     };
     _trackConnections << connect(vehicle, &Vehicle::coordinateChanged, this, update);
     _trackConnections << connect(vehicle, &Vehicle::flightModeChanged, this, update);
@@ -1537,6 +1544,50 @@ QString SprayAreaComplexItem::markSprayedFromDrone()
     return _markSprayed(vehicle);
 }
 
+std::vector<int> SprayAreaComplexItem::_routeSequence(Vehicle *vehicle) const
+{
+    if (!vehicle || !vehicle->missionManager() || _route.pointCount() < 2) {
+        return {};
+    }
+    const QList<MissionItem *> &items  = vehicle->missionManager()->missionItems();
+    const spray::SprayRoute     flown  = _routeReversed ? _route.reversed() : _route;
+    const auto                 &points = flown.points();
+    auto matches = [](const MissionItem *item, const spray::LatLon &p) {
+        return item->command() == MAV_CMD_NAV_WAYPOINT
+               && item->coordinate().distanceTo(QGeoCoordinate(p.lat, p.lon)) < 0.5;
+    };
+    std::vector<int> seqOf(points.size(), -1);
+    int from = 0;
+    for (size_t i = 0; i < points.size(); ++i) {
+        for (int j = from; j < items.count(); ++j) {
+            if (!matches(items[j], points[i])) {
+                continue;
+            }
+            int found = j;
+            if (i == 0) {
+                // The start can be there twice (arriving at transit height, then
+                // at spray height): the route starts at the second.
+                for (int n = j + 1; n < items.count(); ++n) {
+                    if (items[n]->command() != MAV_CMD_NAV_WAYPOINT) {
+                        continue;
+                    }
+                    if (!matches(items[n], points[i])) {
+                        break;
+                    }
+                    found = n;
+                }
+            }
+            seqOf[i] = items[found]->sequenceNumber();
+            from     = found + 1;
+            break;
+        }
+        if (seqOf[i] < 0) {
+            return {};
+        }
+    }
+    return seqOf;
+}
+
 bool SprayAreaComplexItem::_sprayedSoFar(Vehicle *vehicle, std::vector<spray::Strip> &strips,
                                          spray::LatLon &stopPoint, QString &error)
 {
@@ -1567,39 +1618,10 @@ bool SprayAreaComplexItem::_sprayedSoFar(Vehicle *vehicle, std::vector<spray::St
     const spray::SprayRoute     flown  = _routeReversed ? _route.reversed() : _route;
     const auto                 &points = flown.points();
     const auto                 &legSpray = flown.segmentSpray();
-    auto matches = [&](const MissionItem *item, const spray::LatLon &p) {
-        return item->command() == MAV_CMD_NAV_WAYPOINT
-               && item->coordinate().distanceTo(QGeoCoordinate(p.lat, p.lon)) < 0.5;
-    };
-    std::vector<int> seqOf(points.size(), -1);
-    int from = 0;
-    for (size_t i = 0; i < points.size(); ++i) {
-        for (int j = from; j < items.count(); ++j) {
-            if (!matches(items[j], points[i])) {
-                continue;
-            }
-            int found = j;
-            if (i == 0) {
-                // The start can be there twice (arriving at transit height, then
-                // at spray height): the route starts at the second.
-                for (int n = j + 1; n < items.count(); ++n) {
-                    if (items[n]->command() != MAV_CMD_NAV_WAYPOINT) {
-                        continue;
-                    }
-                    if (!matches(items[n], points[i])) {
-                        break;
-                    }
-                    found = n;
-                }
-            }
-            seqOf[i] = items[found]->sequenceNumber();
-            from     = found + 1;
-            break;
-        }
-        if (seqOf[i] < 0) {
-            error = tr("The drone's mission isn't this plan. Open the plan the drone is flying, or upload this one first.");
-            return false;
-        }
+    const std::vector<int>      seqOf  = _routeSequence(vehicle);
+    if (seqOf.empty()) {
+        error = tr("The drone's mission isn't this plan. Open the plan the drone is flying, or upload this one first.");
+        return false;
     }
 
     if (current > seqOf.back()) {
@@ -1846,13 +1868,110 @@ void SprayAreaComplexItem::_updateCoverage(Vehicle *vehicle)
         const double         ab       = a.distanceTo(b);
         const double         offLine  = ab * qSin(qDegreesToRadians(a.azimuthTo(here) - a.azimuthTo(b)));
         if (a.distanceTo(here) > ab && qAbs(offLine) < 0.3) {
+            _coverageLengthM += a.distanceTo(here) - ab;
             path[n - 1] = here;
             emit coverageLastPointMoved(here);
             return;
         }
     }
+    if (n >= 1) {
+        _coverageLengthM += path[n - 1].distanceTo(here);
+    }
     path.append(here);
     emit coveragePointAdded(here);
+}
+
+void SprayAreaComplexItem::_recomputeCoverageLength()
+{
+    _coverageLengthM = 0.0;
+    for (const QList<QGeoCoordinate> &path : _coverage) {
+        for (qsizetype i = 1; i < path.count(); ++i) {
+            _coverageLengthM += path[i - 1].distanceTo(path[i]);
+        }
+    }
+    emit progressChanged();
+}
+
+double SprayAreaComplexItem::acresDone() const
+{
+    const double trailM2 = _coverageLengthM * _swathWidthFact.rawValue().toDouble();
+    return qMax(trailM2, _result.sprayedDoneM2) / 4046.8564224;
+}
+
+void SprayAreaComplexItem::_updateProgress(Vehicle *vehicle)
+{
+    QString phase;
+    int     pass     = 0;
+    int     total    = 0;
+    double  minutes  = -1.0;
+
+    const spray::SprayRoute flown = _routeReversed ? _route.reversed() : _route;
+    for (bool isSpray : flown.segmentSpray()) {
+        total += isSpray ? 1 : 0;
+    }
+
+    if (!vehicle || !vehicle->flying()) {
+        phase = QStringLiteral("landed");
+    } else if (vehicle->flightMode() == vehicle->rtlFlightMode()) {
+        phase = QStringLiteral("returning");
+    } else if (vehicle->flightMode() == vehicle->pauseFlightMode()) {
+        phase = QStringLiteral("paused");
+    } else if (vehicle->flightMode() == vehicle->landFlightMode()) {
+        phase = QStringLiteral("landing");
+    } else if (vehicle->flightMode() != vehicle->missionFlightMode()) {
+        phase = QStringLiteral("other");
+    } else if (_returnedMidJob) {
+        phase = QStringLiteral("returning");   // flying SprayGCS's way back
+    } else {
+        if (_progressSeqsDirty) {
+            _progressSeqs      = _routeSequence(vehicle);
+            _progressSeqsDirty = false;
+        }
+        const int current = vehicle->missionManager() ? vehicle->missionManager()->currentIndex() : -1;
+        const auto &points = flown.points();
+        const auto &legSpray = flown.segmentSpray();
+        if (_progressSeqs.empty() || current < 0 || _progressSeqs.size() != points.size()) {
+            phase = QStringLiteral("mission");
+        } else if (current > _progressSeqs.back()) {
+            phase = QStringLiteral("toHome");
+            pass  = total;
+            minutes = 0.0;
+        } else {
+            // The leg it's on ends at the first route point at or after the item it's flying to.
+            size_t end = 0;
+            while (end < _progressSeqs.size() && _progressSeqs[end] < current) {
+                ++end;
+            }
+            const QGeoCoordinate here = vehicle->coordinate();
+            double remainingM = 0.0;
+            if (here.isValid() && end < points.size()) {
+                remainingM = here.distanceTo(QGeoCoordinate(points[end].lat, points[end].lon));
+            }
+            for (size_t i = end + 1; i < points.size(); ++i) {
+                remainingM += flown.segmentLengthM(static_cast<int>(i - 1));
+            }
+            const double sprayMS = qMax(0.1, _speedFact.rawValue().toDouble());
+            minutes = remainingM / sprayMS / 60.0;
+            if (end == 0) {
+                phase = QStringLiteral("toField");
+            } else {
+                for (size_t i = 0; i + 1 < end && i < legSpray.size(); ++i) {
+                    pass += legSpray[i] ? 1 : 0;   // passes before this leg
+                }
+                const bool onSprayLeg = end - 1 < legSpray.size() && legSpray[end - 1];
+                pass += onSprayLeg ? 1 : 0;
+                phase = onSprayLeg ? QStringLiteral("spraying") : QStringLiteral("turning");
+            }
+        }
+    }
+
+    if (phase != _jobPhase || pass != _passNumber || total != _passTotal || !qFuzzyCompare(minutes + 2.0, _jobMinutesLeft + 2.0)) {
+        _jobPhase       = phase;
+        _passNumber     = pass;
+        _passTotal      = total;
+        _jobMinutesLeft = minutes;
+        emit progressChanged();
+    }
 }
 
 QVariantList SprayAreaComplexItem::coverageSegments() const
@@ -1970,6 +2089,7 @@ void SprayAreaComplexItem::clearSprayed()
         if (_pumpOn) {
             _coverage.emplace_back();   // keep recording the stretch in progress
         }
+        _recomputeCoverageLength();
         emit coverageReset();
     }
     if (_sprayed.empty() && !_hasResumeFrom) {
@@ -2520,6 +2640,7 @@ bool SprayAreaComplexItem::load(const QJsonObject &complexObject,
     if (_pumpOn) {
         _coverage.emplace_back();   // the stretch in progress goes on in a path of its own
     }
+    _recomputeCoverageLength();
     emit coverageReset();
 
     _fieldPolygon.clear();
