@@ -15,6 +15,7 @@
 #include "SettingsManager.h"
 #include "VideoSettings.h"
 #include "PlanViewSettings.h"
+#include "FlyViewSettings.h"
 #include "MultiVehicleManager.h"
 #include "Vehicle.h"
 #include "ParameterManager.h"
@@ -133,9 +134,24 @@ void CustomPlugin::adjustSettingMetaData(const QString& settingsGroup, FactMetaD
             return;
         }
     } else if (settingsGroup == PlanViewSettings::settingsGroup) {
-        // SprayGCS: condition gates only change QGC's camera Survey and Corridor
-        // Scan patterns; spray plans don't use them. Hide the option (off).
-        if (metaData.name() == PlanViewSettings::useConditionGateName) {
+        // SprayGCS: options that don't apply to a quad sprayer are hidden (off):
+        // condition gates only change QGC's camera Survey and Corridor Scan
+        // patterns; multiple landing patterns are for fixed-wing, and spray plans
+        // keep exactly one (the way home for the drone's Return); the VTOL
+        // transition distance is for VTOL aircraft.
+        if (metaData.name() == PlanViewSettings::useConditionGateName
+                || metaData.name() == PlanViewSettings::allowMultipleLandingPatternsName) {
+            metaData.setRawDefaultValue(false);
+            userVisible = false;
+            return;
+        }
+        if (metaData.name() == PlanViewSettings::vtolTransitionDistanceName) {
+            userVisible = false;
+            return;
+        }
+    } else if (settingsGroup == FlyViewSettings::settingsGroup) {
+        // SprayGCS: a spray drone has no camera to trigger.
+        if (metaData.name() == FlyViewSettings::showSimpleCameraControlName) {
             metaData.setRawDefaultValue(false);
             userVisible = false;
             return;
