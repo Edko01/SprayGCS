@@ -3,6 +3,7 @@
 #include "AppMessages.h"
 #include "AppSettings.h"
 #include "CustomPlugin.h"
+#include "FirmwarePlugin.h"
 #include "JsonParsing.h"
 #include "MissionFlightStatus.h"
 #include "MissionController.h"
@@ -1361,9 +1362,15 @@ void SprayAreaComplexItem::_trackVehicle(Vehicle *vehicle)
     _trackIndex     = -1;
     _trackPos       = QGeoCoordinate();
     _trackInMission = false;
+    _trackTarget    = QGeoCoordinate();
+    _trackTargetAlt = qQNaN();
     _setPumpOn(false);
+    _updateDroneMaxSpeed();
     if (!vehicle || !vehicle->missionManager()) {
         return;
+    }
+    if (ParameterManager *params = vehicle->parameterManager()) {
+        _trackConnections << connect(params, &ParameterManager::parametersReadyChanged, this, &SprayAreaComplexItem::_updateDroneMaxSpeed);
     }
 
     // While the drone flies the mission, remember where it is; when it leaves
@@ -1379,6 +1386,15 @@ void SprayAreaComplexItem::_trackVehicle(Vehicle *vehicle)
         if (_trackInMission && v->coordinate().isValid()) {
             _trackIndex = v->missionManager()->currentIndex();
             _trackPos   = v->coordinate();
+            for (const MissionItem *item : v->missionManager()->missionItems()) {
+                if (item->sequenceNumber() == _trackIndex) {
+                    if (item->command() == MAV_CMD_NAV_WAYPOINT) {
+                        _trackTarget    = item->coordinate();
+                        _trackTargetAlt = item->param7();
+                    }
+                    break;
+                }
+            }
         }
         if (wasInMission && !_trackInMission && v->flying() && !_returnUploading) {
             _recordBreakpoint(v, v->flightMode());
@@ -1392,11 +1408,67 @@ void SprayAreaComplexItem::_trackVehicle(Vehicle *vehicle)
     update();
 
     // Each upload of the plan sets the drone's Return to suit its transit mode.
+    // After an upload in the air (e.g. paused to change a setting), carry on
+    // from where the drone was.
     _trackConnections << connect(vehicle->missionManager(), &PlanManager::sendComplete, this, [this](bool error) {
         if (!error && !_returnUploading) {
             _applyReturnSettings(_trackedVehicle.data());
+            _continueAfterUpload(_trackedVehicle.data());
         }
     });
+}
+
+void SprayAreaComplexItem::_updateDroneMaxSpeed()
+{
+    QObject::disconnect(_maxSpeedConnection);
+    double   maxSpeed = 0.0;
+    Vehicle *vehicle  = _trackedVehicle.data();
+    ParameterManager *params = vehicle && vehicle->px4Firmware() ? vehicle->parameterManager() : nullptr;
+    const QString name = QStringLiteral("MPC_XY_VEL_MAX");
+    if (params && params->parametersReady() && params->parameterExists(ParameterManager::defaultComponentId, name)) {
+        if (Fact *fact = params->getParameter(ParameterManager::defaultComponentId, name)) {
+            maxSpeed = fact->rawValue().toDouble();
+            _maxSpeedConnection = connect(fact, &Fact::rawValueChanged, this, &SprayAreaComplexItem::_updateDroneMaxSpeed);
+        }
+    }
+    if (!qFuzzyCompare(maxSpeed + 1.0, _droneMaxSpeed + 1.0)) {
+        _droneMaxSpeed = maxSpeed;
+        emit droneMaxSpeedChanged();
+    }
+}
+
+void SprayAreaComplexItem::_continueAfterUpload(Vehicle *vehicle)
+{
+    // PX4 starts a newly uploaded mission from its first item, and in the air
+    // that's the takeoff point: the drone would turn round and fly back there.
+    // Instead, carry on towards the waypoint it was flying to. (A resume from
+    // what's sprayed sets its own starting point.)
+    if (!vehicle || !vehicle->missionManager() || !vehicle->flying() || _resumeHookPending || !_trackTarget.isValid()) {
+        return;
+    }
+    const QList<MissionItem *> &items  = vehicle->missionManager()->missionItems();
+    int                         target = -1;
+    for (int i = 0; i < items.count(); ++i) {
+        const MissionItem *item = items[i];
+        if (item->command() == MAV_CMD_NAV_WAYPOINT && item->coordinate().distanceTo(_trackTarget) < 0.5
+                && (qIsNaN(_trackTargetAlt) || qAbs(item->param7() - _trackTargetAlt) < 0.5)) {
+            target = i;
+            break;
+        }
+    }
+    if (target < 0) {
+        QGC::showAppMessage(tr("The route changed where the drone was flying, so the mission would start over from takeoff. "
+                               "To carry on, tap Resume From Breakpoint or Mark Sprayed So Far, then upload again."));
+        return;
+    }
+    // Start with the commands just before that waypoint (speed, pump), so they apply.
+    int first = target;
+    while (first > 0 && items[first - 1]->command() > MAV_CMD_NAV_LAST) {
+        --first;
+    }
+    const int homeOffset = vehicle->firmwarePlugin()->sendHomePositionToVehicle() ? 0 : 1;
+    vehicle->setCurrentMissionSequence(items[first]->sequenceNumber() + homeOffset);
+    QGC::showAppMessage(tr("Plan uploaded. The drone carries on where it left off: switch it to Mission to continue."));
 }
 
 void SprayAreaComplexItem::_applyReturnSettings(Vehicle *vehicle)
@@ -1596,13 +1668,17 @@ void SprayAreaComplexItem::_applySprayed(const std::vector<spray::Strip> &strips
     // After this plan is uploaded, the drone continues from the route's first
     // waypoint (where it's waiting) instead of the start of the mission.
     QObject::disconnect(_sendCompleteConnection);
+    _resumeHookPending = false;
     if (_hasResumeFrom) {
         QPointer<Vehicle> target = vehicle;
+        _resumeHookPending = true;
         _sendCompleteConnection = connect(vehicle->missionManager(), &PlanManager::sendComplete, this, [this, target](bool error) {
             if (_returnUploading) {
                 return;   // that was SprayGCS's Return route, not this plan
             }
             QObject::disconnect(_sendCompleteConnection);
+            // Cleared after the other upload handlers (which skip while it's set) have run.
+            QMetaObject::invokeMethod(this, [this]() { _resumeHookPending = false; }, Qt::QueuedConnection);
             if (error || !target || !_hasResumeFrom || !target->flying()) {
                 return;   // on the ground the mission starts with the takeoff as usual
             }
@@ -1888,6 +1964,7 @@ void SprayAreaComplexItem::clearSprayed()
     _sprayed.clear();
     _hasResumeFrom = false;
     QObject::disconnect(_sendCompleteConnection);
+    _resumeHookPending = false;
     _regenerate();
     _rebuildSprayedVariant();
     emit sprayedChanged();

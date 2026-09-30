@@ -499,6 +499,26 @@ Rectangle {
             }
         }
 
+        // Faster than the drone can fly (PX4 caps every leg at MPC_XY_VEL_MAX).
+        QGCLabel {
+            readonly property real _max:        missionItem.droneMaxSpeed
+            readonly property bool _sprayOver:  _max > 0 && missionItem.speed.rawValue > _max + 0.01
+            readonly property bool _transitOver: _max > 0 && missionItem.transitSpeed.rawValue > _max + 0.01
+
+            Layout.fillWidth: true
+            wrapMode:         Text.WordWrap
+            color:            qgcPal.warningText
+            visible:          (_sprayOver || _transitOver) && missionItem.fieldPolygon.isValid && !missionItem.boundaryEditMode
+                              && (_tab === "basic" || _tab === "transit")
+            text: {
+                var top = QGroundControl.unitsConversion.metersSecondToAppSettingsSpeedUnits(_max).toFixed(1) + " "
+                          + QGroundControl.unitsConversion.appSettingsSpeedUnitsString
+                var what = _sprayOver && _transitOver ? qsTr("Spray and transit speeds are")
+                                                      : (_sprayOver ? qsTr("Spray speed is") : qsTr("Transit speed is"))
+                return qsTr("%1 faster than the drone's top speed of %2 (its MPC_XY_VEL_MAX setting), so it flies at %2.").arg(what).arg(top)
+            }
+        }
+
         // ---- Basic --------------------------------------------------------------
         ColumnLayout {
             Layout.fillWidth: true
