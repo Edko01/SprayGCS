@@ -72,6 +72,8 @@ public:
     Q_PROPERTY(bool           transitRouteCustom READ transitRouteCustom NOTIFY missionUpdated)
     Q_PROPERTY(bool           transitEntryInside READ transitEntryInside NOTIFY missionUpdated)
     Q_PROPERTY(bool           transitBelowSpray  READ transitBelowSpray  NOTIFY missionUpdated)  ///< transit height set below spray height (spray height is used)
+    /// Mode A: from some of the field, the straight line home (Return) leaves across a side that isn't an entry side.
+    Q_PROPERTY(bool           returnLeavesOtherSide READ returnLeavesOtherSide NOTIFY missionUpdated)
     Q_PROPERTY(QVariantList   transitLegs      READ transitLegs      NOTIFY missionUpdated)  ///< [{start, end}] flown in transit
     Q_PROPERTY(bool           transitEditMode  READ transitEditMode  WRITE setTransitEditMode NOTIFY transitEditModeChanged)
     /// The boundary can only be changed in this mode (on by default while there's no boundary),
@@ -148,6 +150,7 @@ public:
     bool           transitEntryInside() const { return _transitEntryInside; }
     bool           transitBelowSpray()  const { return _transitAltitudeFact.rawValue().toDouble() < _altitudeFact.rawValue().toDouble(); }
     QVariantList   transitLegs()        const { return _transitLegsVariant; }
+    bool           returnLeavesOtherSide() const { return _returnLeavesOtherSide; }
     bool           transitEditMode()    const { return _transitEditMode; }
     void           setTransitEditMode(bool enable);
     bool           boundaryEditMode()   const { return _boundaryEditMode; }
@@ -346,6 +349,7 @@ private:
     void _rebuildSprayedVariant();
     void _trackVehicle(Vehicle *vehicle);   ///< remember where the drone left Mission mode
     int  _resumeStartSeq() const;           ///< plan sequence number of the route's first waypoint
+    void _applyReturnSettings(Vehicle *vehicle);   ///< after an upload: the drone's Return to suit this plan's transit mode
     void _emitRouteChanged(int oldLastSeq);
     void _rebuildRouteVariants();
 
@@ -378,6 +382,7 @@ private:
     std::vector<spray::LatLon>    _transitRoute;            ///< mode B, points after takeoff (last = entry)
     bool                          _transitRouteCustom = false;
     bool                          _transitEntryInside = true;
+    bool                          _returnLeavesOtherSide = false;
     std::vector<spray::PlanStep>  _missionSteps;
     spray::MissionStats           _missionStats;
     QVariantList                  _gateLinesVariant;

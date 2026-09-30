@@ -312,6 +312,11 @@ int main()
 
     std::printf("helpers\n");
     {
+        // rect: side 0 bottom (y=0), 1 right, 2 top, 3 left.
+        CHECK(exitSide(rect, at(50, 30), at(50, -40)) == 0, "exit bottom %d", exitSide(rect, at(50, 30), at(50, -40)));
+        CHECK(exitSide(rect, at(50, 30), at(-40, 30)) == 3, "exit left %d", exitSide(rect, at(50, 30), at(-40, 30)));
+        CHECK(exitSide(rect, at(90, 55), at(-40, -10)) == 3, "exit left from top right %d", exitSide(rect, at(90, 55), at(-40, -10)));
+        CHECK(exitSide(rect, at(50, 30), at(60, 40)) == -1, "no exit inside");
         CHECK(pointInPolygon(rect, at(50, 30)) && !pointInPolygon(rect, at(50, -1)) && pointInPolygon(rect, at(0, 30)), "pointInPolygon");
         LatLon n = nearestPointOnPolygon(rect, at(50, -40));
         CHECK(std::fabs(xOf(n) - 50) < 0.01 && std::fabs(yOf(n)) < 0.01, "nearest point (%.2f, %.2f)", xOf(n), yOf(n));

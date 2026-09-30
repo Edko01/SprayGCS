@@ -310,34 +310,8 @@ QQmlApplicationEngine* CustomPlugin::createQmlApplicationEngine(QObject* parent)
     }
 #endif
 
-    // Return follows the plan's way out only with PX4's RTL_TYPE = 1 (return
-    // to the mission landing: the DO_LAND_START marker SprayGCS puts before the
-    // way out). Set it on every PX4 drone that connects, and tell the pilot.
-    connect(MultiVehicleManager::instance(), &MultiVehicleManager::vehicleAdded, this, [this](Vehicle *vehicle) {
-        if (!vehicle || !vehicle->px4Firmware()) {
-            return;
-        }
-        ParameterManager *params = vehicle->parameterManager();
-        auto apply = [this, params]() {
-            static const QString name = QStringLiteral("RTL_TYPE");
-            if (!params->parametersReady() || !params->parameterExists(ParameterManager::defaultComponentId, name)) {
-                return;
-            }
-            Fact *rtlType = params->getParameter(ParameterManager::defaultComponentId, name);
-            if (rtlType && rtlType->rawValue().toInt() != 1) {
-                qCDebug(CustomLog) << "RTL_TYPE" << rtlType->rawValue().toInt() << "-> 1";
-                rtlType->setRawValue(1);
-                QGC::showAppMessage(tr("SprayGCS set the drone's RTL_TYPE to 1, so Return leaves the field the planned way "
-                                       "(through the exit, or back along the transit route) instead of flying straight home."));
-            }
-        };
-        connect(params, &ParameterManager::parametersReadyChanged, this, [apply](bool ready) {
-            if (ready) {
-                apply();
-            }
-        });
-        apply();
-    });
+    // The drone's Return (RTL_TYPE, RTL_RETURN_ALT) is set to suit each plan
+    // when it's uploaded: see SprayAreaComplexItem::_applyReturnSettings.
 
     _qmlEngine = QGCCorePlugin::createQmlApplicationEngine(parent);
     _qmlEngine->addImportPath("qrc:/qml/Custom/Widgets");

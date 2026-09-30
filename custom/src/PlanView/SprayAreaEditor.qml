@@ -736,7 +736,15 @@ Rectangle {
                 wrapMode:         Text.WordWrap
                 text:             _routeTransit
                                   ? qsTr("Flies the planned route (blue) to its last point, then at spray height to the start. Comes back the same way.")
-                                  : qsTr("Flies straight to the entry side (thick blue), then inside the field to the start. Leaves the field through the same side.")
+                                  : qsTr("Flies straight from takeoff through the entry side (thick blue) to the start, and at the end back out through it to takeoff. Return (RTH) flies straight back to takeoff at transit height.")
+            }
+
+            QGCLabel {
+                Layout.fillWidth: true
+                wrapMode:         Text.WordWrap
+                color:            qgcPal.warningText
+                text:             qsTr("From part of the field, the straight line back to takeoff crosses another side. Allow that side as an entry side too, or use B for the way back.")
+                visible:          !_routeTransit && missionItem.returnLeavesOtherSide
             }
 
             // Name, value box and up / down arrows (tap: one step, hold: repeat).

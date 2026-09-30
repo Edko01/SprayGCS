@@ -7,6 +7,7 @@
 #include "MissionController.h"
 #include "MissionManager.h"
 #include "MultiVehicleManager.h"
+#include "ParameterManager.h"
 #include "PlanMasterController.h"
 #include "QGCApplication.h"
 #include "QmlObjectListModel.h"
@@ -465,6 +466,7 @@ void SprayAreaComplexItem::_rebuildMission()
     _transitEditPointsVariant.clear();
     _gateLinesVariant.clear();
     _transitEntryInside = true;
+    _returnLeavesOtherSide = false;
 
     const bool routeMode = _transitModeFact.rawValue().toInt() == 1;
 
@@ -513,6 +515,18 @@ void SprayAreaComplexItem::_rebuildMission()
             }
             prev        = c;
             prevTransit = s.transit;
+        }
+    }
+
+    // Mode A: Return flies straight home. Check that from every corner of the
+    // spray area that line leaves through an entry side.
+    if (_result.valid && !routeMode && !_resolvedGateSides.isEmpty()) {
+        for (const auto &corner : _result.sprayArea) {
+            const int side = spray::exitSide(boundary, corner, homeLL);
+            if (side >= 0 && !_resolvedGateSides.contains(side)) {
+                _returnLeavesOtherSide = true;
+                break;
+            }
         }
     }
 
@@ -1329,6 +1343,55 @@ void SprayAreaComplexItem::_trackVehicle(Vehicle *vehicle)
     _trackConnections << connect(vehicle, &Vehicle::coordinateChanged, this, update);
     _trackConnections << connect(vehicle, &Vehicle::flightModeChanged, this, update);
     update();
+
+    // Each upload of the plan sets the drone's Return to suit its transit mode.
+    _trackConnections << connect(vehicle->missionManager(), &PlanManager::sendComplete, this, [this](bool error) {
+        if (!error) {
+            _applyReturnSettings(_trackedVehicle.data());
+        }
+    });
+}
+
+void SprayAreaComplexItem::_applyReturnSettings(Vehicle *vehicle)
+{
+    if (!vehicle || !vehicle->px4Firmware() || !_result.valid) {
+        return;
+    }
+    ParameterManager *params = vehicle->parameterManager();
+    if (!params || !params->parametersReady()) {
+        return;
+    }
+    const int  component = ParameterManager::defaultComponentId;
+    const bool routeMode = hasTakeoff() && _transitModeFact.rawValue().toInt() == 1;
+    bool       changed   = false;
+
+    // Mode A: PX4's direct Return: climb to RTL_RETURN_ALT, straight back to the
+    //         takeoff point, land. Flown at transit height.
+    // Mode B: PX4's mission-landing Return (RTL_TYPE 1): to the waypoint after
+    //         the plan's DO_LAND_START, then back along the planned route.
+    const QString typeName = QStringLiteral("RTL_TYPE");
+    if (params->parameterExists(component, typeName)) {
+        Fact *type = params->getParameter(component, typeName);
+        const int wanted = routeMode ? 1 : 0;
+        if (type && type->rawValue().toInt() != wanted) {
+            type->setRawValue(wanted);
+            changed = true;
+        }
+    }
+    const QString altName = QStringLiteral("RTL_RETURN_ALT");
+    if (!routeMode && params->parameterExists(component, altName)) {
+        Fact *alt = params->getParameter(component, altName);
+        const double wanted = qMax(_transitAltitudeFact.rawValue().toDouble(), _altitudeFact.rawValue().toDouble());
+        if (alt && qAbs(alt->rawValue().toDouble() - wanted) > 0.05) {
+            alt->setRawValue(wanted);
+            changed = true;
+        }
+    }
+    if (changed) {
+        QGC::showAppMessage(routeMode
+            ? tr("Return set for this plan (mode B): back along the planned route, then land at the takeoff point.")
+            : tr("Return set for this plan (mode A): straight back to the takeoff point at transit height, then land."));
+    }
 }
 
 QString SprayAreaComplexItem::markSprayedFromDrone()

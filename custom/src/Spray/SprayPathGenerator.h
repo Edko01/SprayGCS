@@ -92,6 +92,10 @@ bool pointInPolygon(const std::vector<LatLon>& polygon, const LatLon& p);
 // or -1 if the boundary has fewer than 3 points.
 int nearestSide(const std::vector<LatLon>& boundary, const LatLon& p);
 
+// The side a straight leg from `inside` (in the field) to `outside` leaves the
+// field through: the last side it crosses. -1 if it doesn't cross the boundary.
+int exitSide(const std::vector<LatLon>& boundary, const LatLon& inside, const LatLon& outside);
+
 // Direction of each side (side i runs from point i to i+1), degrees clockwise
 // from north in [0, 360). Measured in the same flat frame the passes are laid
 // out in, so passes at this angle run exactly parallel to the side. NaN for a

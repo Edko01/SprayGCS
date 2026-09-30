@@ -16,12 +16,14 @@
 //     height and speed to the start point. On the way back: fly at spray height
 //     and speed to the entry point, climb, and follow the route back.
 //
-// Return (until the onboard Field Return app replaces PX4's Return): a
+// Return (until the onboard Field Return app replaces PX4's Return): mode A
+// uses PX4's direct Return (RTL_TYPE 0: straight back to the takeoff point at
+// transit height). Mode B uses its mission-landing Return (RTL_TYPE 1): a
 // landing-sequence marker (LandStart, sent as MAV_CMD_DO_LAND_START) sits just
-// before the way out: mode A before the exit gate, mode B before the climb at
-// the entry point. With PX4's RTL_TYPE = 1, Return flies straight to the
-// waypoint after the marker, then follows the plan's way home and lands (the
-// plan ends with a Land at the takeoff point, not Return To Launch).
+// before the climb at the entry point, and Return flies straight to the
+// waypoint after it, then back along the route and lands. SprayGCS sets these
+// on upload. Mode A keeps the marker before its exit gate; PX4 ignores it
+// there. The plan ends with a Land at the takeoff point, not Return To Launch.
 //
 // Heights are above ground. PX4 missions hold them relative to the takeoff
 // point; following the terrain is left to the onboard app. Transit is never

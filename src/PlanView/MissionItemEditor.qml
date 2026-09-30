@@ -88,7 +88,7 @@ Rectangle {
                 anchors.verticalCenter: parent.verticalCenter
                 anchors.margins:    ScreenTools.defaultFontPixelHeight / 2
                 wrapMode:           Text.WordWrap
-                text:               qsTr("Ends the job: the drone lands back at the takeoff point. A Return (RTH) during the job also leaves the field the planned way and lands here. Nothing to set.")
+                text:               qsTr("Ends the job: the drone lands back at the takeoff point. A Return (RTH) during the job also comes back here (mode A: straight; mode B: along the planned route). Nothing to set.")
             }
         }
     }
