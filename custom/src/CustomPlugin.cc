@@ -370,6 +370,15 @@ QUrl CustomOverrideInterceptor::intercept(const QUrl &url, QQmlAbstractUrlInterc
 
 /*===========================================================================*/
 
+QString CustomPlugin::sprayReturn()
+{
+    SprayAreaComplexItem *item = SprayAreaComplexItem::planViewItem();
+    if (!item) {
+        return tr("No spray plan is open.");
+    }
+    return item->returnViaEntrySide();
+}
+
 QVariantList CustomPlugin::complexMissionItemNames(Vehicle *vehicle)
 {
     // Start with the standard set, then append our custom item.

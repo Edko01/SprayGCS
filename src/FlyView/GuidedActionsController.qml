@@ -562,6 +562,13 @@ Item {
         var selectedVehicles;
         switch (actionCode) {
         case actionRTL:
+            // SprayGCS: a mode A spray plan comes back the way it went in (inside the
+            // field to the entry side, across it, straight to takeoff). Otherwise, or
+            // if SprayGCS can't, the drone's own Return.
+            if (typeof QGroundControl.corePlugin.sprayReturn === "function"
+                    && QGroundControl.corePlugin.sprayReturn() === "") {
+                break
+            }
             _activeVehicle.guidedModeRTL(optionChecked)
             break
         case actionLand:

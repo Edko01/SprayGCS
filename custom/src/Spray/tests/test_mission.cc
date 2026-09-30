@@ -310,13 +310,31 @@ int main()
         }
     }
 
+    std::printf("mode A way back: inside to the entry side, across, straight to takeoff\n");
+    {
+        const LatLon takeoff = at(-60, -30);            // south-west of the field
+        const std::vector<int> left { 3 };              // side 3 = left (x = 0)
+        auto back = gateReturnPath(rect, left, takeoff, at(90, 55));
+        CHECK(back.size() >= 2 && distanceM(back.back(), takeoff) < 0.01, "ends at takeoff");
+        if (back.size() >= 2) {
+            const LatLon gate = back[back.size() - 2];
+            CHECK(std::fabs(xOf(gate)) < 0.01 && yOf(gate) > 1.9 && yOf(gate) < 58.1, "crosses the left side (%.2f, %.2f)", xOf(gate), yOf(gate));
+            // From the gate, the straight line to takeoff doesn't re-enter the field.
+            CHECK(!pointInPolygon(rect, at((xOf(gate) + xOf(takeoff)) / 2, (yOf(gate) + yOf(takeoff)) / 2)), "last leg outside");
+        }
+        // Mirrors the way in: same crossing as flying in from takeoff to that point.
+        const LatLon in = bestGatePoint(rect, left, takeoff, at(90, 55));
+        CHECK(back.size() >= 2 && distanceM(back[back.size() - 2], in) < 0.01, "same crossing as the way in");
+        // Near the left side: crosses it close by.
+        auto near = gateReturnPath(rect, left, takeoff, at(10, 50));
+        CHECK(near.size() >= 2 && std::fabs(xOf(near[near.size() - 2])) < 0.01, "near: crosses the left side");
+        // Outside the field (in transit): straight home.
+        auto outside = gateReturnPath(rect, left, takeoff, at(-20, 10));
+        CHECK(outside.size() == 1 && distanceM(outside[0], takeoff) < 0.01, "outside: straight to takeoff");
+    }
+
     std::printf("helpers\n");
     {
-        // rect: side 0 bottom (y=0), 1 right, 2 top, 3 left.
-        CHECK(exitSide(rect, at(50, 30), at(50, -40)) == 0, "exit bottom %d", exitSide(rect, at(50, 30), at(50, -40)));
-        CHECK(exitSide(rect, at(50, 30), at(-40, 30)) == 3, "exit left %d", exitSide(rect, at(50, 30), at(-40, 30)));
-        CHECK(exitSide(rect, at(90, 55), at(-40, -10)) == 3, "exit left from top right %d", exitSide(rect, at(90, 55), at(-40, -10)));
-        CHECK(exitSide(rect, at(50, 30), at(60, 40)) == -1, "no exit inside");
         CHECK(pointInPolygon(rect, at(50, 30)) && !pointInPolygon(rect, at(50, -1)) && pointInPolygon(rect, at(0, 30)), "pointInPolygon");
         LatLon n = nearestPointOnPolygon(rect, at(50, -40));
         CHECK(std::fabs(xOf(n) - 50) < 0.01 && std::fabs(yOf(n)) < 0.01, "nearest point (%.2f, %.2f)", xOf(n), yOf(n));

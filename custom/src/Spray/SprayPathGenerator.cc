@@ -1246,37 +1246,6 @@ int nearestSide(const std::vector<LatLon>& boundary, const LatLon& p)
     return best;
 }
 
-int exitSide(const std::vector<LatLon>& boundary, const LatLon& inside, const LatLon& outside)
-{
-    if (boundary.size() < 3) {
-        return -1;
-    }
-    const FieldFrame f = makeFrame(boundary);
-    const XY a = f.proj.toXY(inside);
-    const XY b = f.proj.toXY(outside);
-    const double dx = b.x - a.x;
-    const double dy = b.y - a.y;
-    int    side  = -1;
-    double lastT = -1.0;
-    for (size_t i = 0; i < f.raw.size(); ++i) {
-        const XY& p = f.raw[i];
-        const XY& q = f.raw[(i + 1) % f.raw.size()];
-        const double ex = q.x - p.x;
-        const double ey = q.y - p.y;
-        const double denom = dx * ey - dy * ex;
-        if (std::fabs(denom) < kEps) {
-            continue;
-        }
-        const double t = ((p.x - a.x) * ey - (p.y - a.y) * ex) / denom;   // along the leg
-        const double u = ((p.x - a.x) * dy - (p.y - a.y) * dx) / denom;   // along the side
-        if (t >= 0.0 && t <= 1.0 && u >= 0.0 && u <= 1.0 && t > lastT) {
-            lastT = t;
-            side  = static_cast<int>(i);
-        }
-    }
-    return side;
-}
-
 std::vector<double> sideBearingsDeg(const std::vector<LatLon>& boundary)
 {
     std::vector<double> bearings;

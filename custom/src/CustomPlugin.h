@@ -65,6 +65,11 @@ public:
 
     static QGCCorePlugin *instance();
 
+    /// Fly view Return: for a mode A spray plan, SprayGCS flies the way back
+    /// (through the entry side, then straight to takeoff). Returns an empty
+    /// string if it did, otherwise why not (then use the drone's own Return).
+    Q_INVOKABLE QString sprayReturn();
+
     // Overrides from QGCCorePlugin
 
     QGCOptions *options() final { return _options; }

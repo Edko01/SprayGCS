@@ -150,6 +150,24 @@ std::vector<PlanStep> buildMission(const MissionInput& in)
     return steps;
 }
 
+std::vector<LatLon> gateReturnPath(const std::vector<LatLon>& boundary, const std::vector<int>& sides,
+                                   const LatLon& takeoff, const LatLon& from)
+{
+    std::vector<LatLon> path;
+    std::vector<int> allowed;
+    for (int s : sides) {
+        if (s >= 0 && s < static_cast<int>(boundary.size())) {
+            allowed.push_back(s);
+        }
+    }
+    if (boundary.size() >= 3 && !allowed.empty() && pointInPolygon(boundary, from) && !pointInPolygon(boundary, takeoff)) {
+        const LatLon gate = bestGatePoint(boundary, allowed, takeoff, from);
+        path = routeInside(boundary, from, gate);   // ends at the gate
+    }
+    path.push_back(takeoff);
+    return path;
+}
+
 MissionStats missionStats(const std::vector<PlanStep>& steps, double climbRateMS)
 {
     MissionStats stats;

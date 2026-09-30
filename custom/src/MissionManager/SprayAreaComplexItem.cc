@@ -152,6 +152,7 @@ SprayAreaComplexItem::SprayAreaComplexItem(PlanMasterController *masterControlle
     // Resuming a job: follow the drone's mission progress (Plan view only), so
     // "Mark Sprayed So Far" knows where it left the mission.
     if (!flyView) {
+        s_planViewItem = this;
         connect(MultiVehicleManager::instance(), &MultiVehicleManager::activeVehicleChanged,
                 this, &SprayAreaComplexItem::_trackVehicle);
         _trackVehicle(MultiVehicleManager::instance()->activeVehicle());
@@ -466,7 +467,6 @@ void SprayAreaComplexItem::_rebuildMission()
     _transitEditPointsVariant.clear();
     _gateLinesVariant.clear();
     _transitEntryInside = true;
-    _returnLeavesOtherSide = false;
 
     const bool routeMode = _transitModeFact.rawValue().toInt() == 1;
 
@@ -515,18 +515,6 @@ void SprayAreaComplexItem::_rebuildMission()
             }
             prev        = c;
             prevTransit = s.transit;
-        }
-    }
-
-    // Mode A: Return flies straight home. Check that from every corner of the
-    // spray area that line leaves through an entry side.
-    if (_result.valid && !routeMode && !_resolvedGateSides.isEmpty()) {
-        for (const auto &corner : _result.sprayArea) {
-            const int side = spray::exitSide(boundary, corner, homeLL);
-            if (side >= 0 && !_resolvedGateSides.contains(side)) {
-                _returnLeavesOtherSide = true;
-                break;
-            }
         }
     }
 
@@ -1346,7 +1334,7 @@ void SprayAreaComplexItem::_trackVehicle(Vehicle *vehicle)
 
     // Each upload of the plan sets the drone's Return to suit its transit mode.
     _trackConnections << connect(vehicle->missionManager(), &PlanManager::sendComplete, this, [this](bool error) {
-        if (!error) {
+        if (!error && !_returnUploading) {
             _applyReturnSettings(_trackedVehicle.data());
         }
     });
@@ -1361,25 +1349,23 @@ void SprayAreaComplexItem::_applyReturnSettings(Vehicle *vehicle)
     if (!params || !params->parametersReady()) {
         return;
     }
-    const int  component = ParameterManager::defaultComponentId;
-    const bool routeMode = hasTakeoff() && _transitModeFact.rawValue().toInt() == 1;
-    bool       changed   = false;
+    const int component = ParameterManager::defaultComponentId;
+    bool      changed   = false;
 
-    // Mode A: PX4's direct Return: climb to RTL_RETURN_ALT, straight back to the
-    //         takeoff point, land. Flown at transit height.
-    // Mode B: PX4's mission-landing Return (RTL_TYPE 1): to the waypoint after
-    //         the plan's DO_LAND_START, then back along the planned route.
+    // The drone's own Return (failsafes, or Return without SprayGCS) is PX4's
+    // mission-landing Return (RTL_TYPE 1): straight to the waypoint after the
+    // plan's DO_LAND_START (mode A: the exit on the entry side; mode B: the
+    // entry point), then the plan's way home, at transit height.
     const QString typeName = QStringLiteral("RTL_TYPE");
     if (params->parameterExists(component, typeName)) {
         Fact *type = params->getParameter(component, typeName);
-        const int wanted = routeMode ? 1 : 0;
-        if (type && type->rawValue().toInt() != wanted) {
-            type->setRawValue(wanted);
+        if (type && type->rawValue().toInt() != 1) {
+            type->setRawValue(1);
             changed = true;
         }
     }
     const QString altName = QStringLiteral("RTL_RETURN_ALT");
-    if (!routeMode && params->parameterExists(component, altName)) {
+    if (params->parameterExists(component, altName)) {
         Fact *alt = params->getParameter(component, altName);
         const double wanted = qMax(_transitAltitudeFact.rawValue().toDouble(), _altitudeFact.rawValue().toDouble());
         if (alt && qAbs(alt->rawValue().toDouble() - wanted) > 0.05) {
@@ -1388,9 +1374,7 @@ void SprayAreaComplexItem::_applyReturnSettings(Vehicle *vehicle)
         }
     }
     if (changed) {
-        QGC::showAppMessage(routeMode
-            ? tr("Return set for this plan (mode B): back along the planned route, then land at the takeoff point.")
-            : tr("Return set for this plan (mode A): straight back to the takeoff point at transit height, then land."));
+        QGC::showAppMessage(tr("The drone's Return is set for this plan: it leaves the field the planned way at transit height, then lands at the takeoff point."));
     }
 }
 
@@ -1402,6 +1386,14 @@ QString SprayAreaComplexItem::markSprayedFromDrone()
     }
     if (vehicle->flightMode() == vehicle->missionFlightMode()) {
         return tr("The drone is still flying the mission. Pause it first (Hold), then mark what's sprayed.");
+    }
+    return _markSprayed(vehicle);
+}
+
+QString SprayAreaComplexItem::_markSprayed(Vehicle *vehicle)
+{
+    if (!vehicle || !vehicle->missionManager()) {
+        return tr("No drone is connected.");
     }
     if (_route.pointCount() < 2) {
         return tr("This Spray Area has no route to compare with.");
@@ -1517,9 +1509,12 @@ QString SprayAreaComplexItem::markSprayedFromDrone()
     if (_hasResumeFrom) {
         QPointer<Vehicle> target = vehicle;
         _sendCompleteConnection = connect(manager, &PlanManager::sendComplete, this, [this, target](bool error) {
+            if (_returnUploading) {
+                return;   // that was SprayGCS's Return route, not this plan
+            }
             QObject::disconnect(_sendCompleteConnection);
-            if (error || !target || !_hasResumeFrom) {
-                return;
+            if (error || !target || !_hasResumeFrom || !target->flying()) {
+                return;   // on the ground the mission starts with the takeoff as usual
             }
             const int seq = _resumeStartSeq();
             if (seq > 0) {
@@ -1528,6 +1523,108 @@ QString SprayAreaComplexItem::markSprayedFromDrone()
             }
         });
     }
+    return QString();
+}
+
+QPointer<SprayAreaComplexItem> SprayAreaComplexItem::s_planViewItem;
+
+SprayAreaComplexItem *SprayAreaComplexItem::planViewItem()
+{
+    return s_planViewItem.data();
+}
+
+QString SprayAreaComplexItem::returnViaEntrySide()
+{
+    Vehicle *vehicle = MultiVehicleManager::instance()->activeVehicle();
+    if (!vehicle || !vehicle->missionManager() || !vehicle->px4Firmware()) {
+        return tr("No PX4 drone is connected.");
+    }
+    if (!vehicle->flying()) {
+        return tr("The drone isn't flying.");
+    }
+    if (!_result.valid || !hasTakeoff() || _transitModeFact.rawValue().toInt() == 1) {
+        return tr("Not a mode A plan: the drone's own Return is used.");
+    }
+    if (vehicle->missionManager()->inProgress()) {
+        return tr("A mission transfer is in progress.");
+    }
+    const QGeoCoordinate here = vehicle->coordinate();
+    if (!here.isValid()) {
+        return tr("The drone's position isn't known.");
+    }
+
+    // The drone should be flying this plan (the route's ends are in its mission).
+    const spray::SprayRoute flown = _routeReversed ? _route.reversed() : _route;
+    auto inMission = [&](const spray::LatLon &p) {
+        for (const MissionItem *item : vehicle->missionManager()->missionItems()) {
+            if (item->command() == MAV_CMD_NAV_WAYPOINT
+                    && item->coordinate().distanceTo(QGeoCoordinate(p.lat, p.lon)) < 0.5) {
+                return true;
+            }
+        }
+        return false;
+    };
+    if (flown.pointCount() < 2 || !inMission(flown.points().front()) || !inMission(flown.points().back())) {
+        return tr("The drone isn't flying this plan: its own Return is used.");
+    }
+
+    // Stop where it is, and note what's sprayed (for resuming later).
+    vehicle->pauseVehicle();
+    _markSprayed(vehicle);
+
+    // The way back, mirroring the way in: inside the field to the point of the
+    // entry side(s) best for here, across it, straight to takeoff, land.
+    const std::vector<spray::LatLon> boundary   = _boundary();
+    const QGeoCoordinate             home       = takeoffPoint();
+    const spray::LatLon              homeLL     { home.latitude(), home.longitude() };
+    const spray::LatLon              hereLL     { here.latitude(), here.longitude() };
+    const double                     transitAlt = qMax(_transitAltitudeFact.rawValue().toDouble(), _altitudeFact.rawValue().toDouble());
+    const std::vector<int>           allowed(_resolvedGateSides.cbegin(), _resolvedGateSides.cend());
+    // Ends at takeoff; outside the field (e.g. still in transit) it's straight there.
+    const std::vector<spray::LatLon> path = spray::gateReturnPath(boundary, allowed, homeLL, hereLL);
+
+    QObject *owner = vehicle->missionManager();
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    QList<MissionItem *> items;
+    int seq = 0;
+    auto waypoint = [&](const spray::LatLon &p, double alt) {
+        items.append(new MissionItem(seq++, MAV_CMD_NAV_WAYPOINT, MAV_FRAME_GLOBAL_RELATIVE_ALT,
+                                     0, 0, 0, nan, p.lat, p.lon, alt, true, false, owner));
+    };
+    waypoint(homeLL, 0);   // home (not sent to PX4)
+    // A failsafe Return during this flight carries on along it.
+    items.append(new MissionItem(seq++, MAV_CMD_DO_LAND_START, MAV_FRAME_MISSION, 0, 0, 0, 0, 0, 0, 0, true, false, owner));
+    items.append(new MissionItem(seq++, MAV_CMD_DO_SET_ACTUATOR, MAV_FRAME_MISSION,
+                                 0.0, nan, nan, nan, nan, nan, 0, true, false, owner));   // pump off
+    items.append(new MissionItem(seq++, MAV_CMD_DO_CHANGE_SPEED, MAV_FRAME_MISSION,
+                                 1, _transitSpeedFact.rawValue().toDouble(), -1, 0, 0, 0, 0, true, false, owner));
+    waypoint(hereLL, transitAlt);   // climb where it is
+    for (const auto &p : path) {
+        waypoint(p, transitAlt);    // ... the last one over takeoff
+    }
+    items.append(new MissionItem(seq++, MAV_CMD_NAV_LAND, MAV_FRAME_GLOBAL_RELATIVE_ALT,
+                                 0, 0, 0, nan, homeLL.lat, homeLL.lon, 0, true, false, owner));
+
+    QPointer<Vehicle> target = vehicle;
+    _returnUploading = true;
+    QObject::disconnect(_returnConnection);
+    _returnConnection = connect(vehicle->missionManager(), &PlanManager::sendComplete, this, [this, target](bool error) {
+        QObject::disconnect(_returnConnection);
+        // Other upload handlers run first and skip this one; clear the flag after them.
+        QMetaObject::invokeMethod(this, [this]() { _returnUploading = false; }, Qt::QueuedConnection);
+        if (!target) {
+            return;
+        }
+        if (error) {
+            target->guidedModeRTL(false);
+            QGC::showAppMessage(tr("Couldn't send the way back; the drone is using its own Return."));
+            return;
+        }
+        target->setCurrentMissionSequence(1);
+        target->setFlightMode(target->missionFlightMode());
+        QGC::showAppMessage(tr("Returning through the entry side, then straight to takeoff. What's sprayed is marked, so the job can be resumed."));
+    });
+    vehicle->missionManager()->writeMissionItems(items);
     return QString();
 }
 

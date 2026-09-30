@@ -72,8 +72,6 @@ public:
     Q_PROPERTY(bool           transitRouteCustom READ transitRouteCustom NOTIFY missionUpdated)
     Q_PROPERTY(bool           transitEntryInside READ transitEntryInside NOTIFY missionUpdated)
     Q_PROPERTY(bool           transitBelowSpray  READ transitBelowSpray  NOTIFY missionUpdated)  ///< transit height set below spray height (spray height is used)
-    /// Mode A: from some of the field, the straight line home (Return) leaves across a side that isn't an entry side.
-    Q_PROPERTY(bool           returnLeavesOtherSide READ returnLeavesOtherSide NOTIFY missionUpdated)
     Q_PROPERTY(QVariantList   transitLegs      READ transitLegs      NOTIFY missionUpdated)  ///< [{start, end}] flown in transit
     Q_PROPERTY(bool           transitEditMode  READ transitEditMode  WRITE setTransitEditMode NOTIFY transitEditModeChanged)
     /// The boundary can only be changed in this mode (on by default while there's no boundary),
@@ -150,7 +148,6 @@ public:
     bool           transitEntryInside() const { return _transitEntryInside; }
     bool           transitBelowSpray()  const { return _transitAltitudeFact.rawValue().toDouble() < _altitudeFact.rawValue().toDouble(); }
     QVariantList   transitLegs()        const { return _transitLegsVariant; }
-    bool           returnLeavesOtherSide() const { return _returnLeavesOtherSide; }
     bool           transitEditMode()    const { return _transitEditMode; }
     void           setTransitEditMode(bool enable);
     bool           boundaryEditMode()   const { return _boundaryEditMode; }
@@ -200,6 +197,16 @@ public:
     Q_INVOKABLE QString markSprayedFromDrone();
     /// Back to spraying the whole field.
     Q_INVOKABLE void    clearSprayed();
+
+    /// Return (RTH) from SprayGCS for a mode A plan: the way it came in, backwards.
+    /// Marks what's sprayed, then sends the drone inside the field to the point of
+    /// the entry side(s) best for where it is, across it, straight to takeoff, and
+    /// lands. Returns an empty string if it took over, or why not (then the
+    /// drone's own Return is used).
+    Q_INVOKABLE QString returnViaEntrySide();
+
+    /// The Spray Area of the plan open in the Plan view, if any (for the Fly view's Return).
+    static SprayAreaComplexItem *planViewItem();
 
     Q_INVOKABLE void undo();
     Q_INVOKABLE void redo();
@@ -349,7 +356,8 @@ private:
     void _rebuildSprayedVariant();
     void _trackVehicle(Vehicle *vehicle);   ///< remember where the drone left Mission mode
     int  _resumeStartSeq() const;           ///< plan sequence number of the route's first waypoint
-    void _applyReturnSettings(Vehicle *vehicle);   ///< after an upload: the drone's Return to suit this plan's transit mode
+    void _applyReturnSettings(Vehicle *vehicle);   ///< after an upload: the drone's Return to suit this plan
+    QString _markSprayed(Vehicle *vehicle);        ///< markSprayedFromDrone() without the paused check
     void _emitRouteChanged(int oldLastSeq);
     void _rebuildRouteVariants();
 
@@ -382,7 +390,6 @@ private:
     std::vector<spray::LatLon>    _transitRoute;            ///< mode B, points after takeoff (last = entry)
     bool                          _transitRouteCustom = false;
     bool                          _transitEntryInside = true;
-    bool                          _returnLeavesOtherSide = false;
     std::vector<spray::PlanStep>  _missionSteps;
     spray::MissionStats           _missionStats;
     QVariantList                  _gateLinesVariant;
@@ -411,6 +418,9 @@ private:
     QGeoCoordinate                _trackPos;                ///< ...and where it was
     bool                          _trackInMission = false;
     QMetaObject::Connection       _sendCompleteConnection;  ///< after an upload, continue from the drone
+    QMetaObject::Connection       _returnConnection;        ///< Return from SprayGCS: route sent, fly it
+    bool                          _returnUploading = false; ///< the upload is the Return route, not this plan
+    static QPointer<SprayAreaComplexItem> s_planViewItem;
 
     // Undo / redo. Changes are grouped: a drag, typing, or a traced boundary
     // lands as one step once things have been still for _undoGroupMs.
