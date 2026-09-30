@@ -18,6 +18,8 @@
 #include "Vehicle.h"
 
 #include <QtCore/QJsonArray>
+#include <QtCore/QJsonObject>
+#include <QtCore/QLocale>
 #include <QtCore/QScopeGuard>
 #include <QtCore/QtMath>
 
@@ -747,6 +749,44 @@ void SprayAreaComplexItem::syncTakeoffAltitude()
 /*---------------------------------------------------------------------------*/
 // Undo / redo
 
+namespace {
+
+bool sameStrips(const std::vector<spray::Strip> &x, const std::vector<spray::Strip> &y)
+{
+    if (x.size() != y.size()) {
+        return false;
+    }
+    for (size_t i = 0; i < x.size(); ++i) {
+        const spray::Strip &a = x[i];
+        const spray::Strip &b = y[i];
+        if (a.a.lat != b.a.lat || a.a.lon != b.a.lon || a.b.lat != b.b.lat || a.b.lon != b.b.lon || a.widthM != b.widthM) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/// Each strip as the 4 corners of its sprayed rectangle, for the map.
+QVariantList stripRectangles(const std::vector<spray::Strip> &strips)
+{
+    QVariantList rectangles;
+    for (const spray::Strip &strip : strips) {
+        const QGeoCoordinate a(strip.a.lat, strip.a.lon);
+        const QGeoCoordinate b(strip.b.lat, strip.b.lon);
+        const double azimuth = a.azimuthTo(b);
+        const double half    = strip.widthM / 2.0;
+        QVariantList corners;
+        corners.append(QVariant::fromValue(a.atDistanceAndAzimuth(half, azimuth - 90.0)));
+        corners.append(QVariant::fromValue(b.atDistanceAndAzimuth(half, azimuth - 90.0)));
+        corners.append(QVariant::fromValue(b.atDistanceAndAzimuth(half, azimuth + 90.0)));
+        corners.append(QVariant::fromValue(a.atDistanceAndAzimuth(half, azimuth + 90.0)));
+        rectangles.append(QVariant(corners));
+    }
+    return rectangles;
+}
+
+} // namespace
+
 bool SprayAreaComplexItem::EditState::operator==(const EditState &other) const
 {
     if (polygon != other.polygon || facts != other.facts
@@ -770,17 +810,15 @@ bool SprayAreaComplexItem::EditState::operator==(const EditState &other) const
     }
     if (hasResumeFrom != other.hasResumeFrom
             || (hasResumeFrom && (resumeFrom.lat != other.resumeFrom.lat || resumeFrom.lon != other.resumeFrom.lon))
-            || sprayed.size() != other.sprayed.size()) {
+            || !sameStrips(sprayed, other.sprayed)) {
         return false;
     }
-    for (size_t i = 0; i < sprayed.size(); ++i) {
-        const spray::Strip &a = sprayed[i];
-        const spray::Strip &b = other.sprayed[i];
-        if (a.a.lat != b.a.lat || a.a.lon != b.a.lon || a.b.lat != b.b.lat || a.b.lon != b.b.lon || a.widthM != b.widthM) {
-            return false;
-        }
+    if (bpValid != other.bpValid) {
+        return false;
     }
-    return true;
+    return !bpValid
+           || (sameStrips(bpStrips, other.bpStrips) && bpStop.lat == other.bpStop.lat && bpStop.lon == other.bpStop.lon
+               && bpReason == other.bpReason && bpTime == other.bpTime);
 }
 
 QList<Fact *> SprayAreaComplexItem::_editableFacts()
@@ -809,6 +847,11 @@ SprayAreaComplexItem::EditState SprayAreaComplexItem::_captureState()
     state.sprayed            = _sprayed;
     state.hasResumeFrom      = _hasResumeFrom;
     state.resumeFrom         = _resumeFrom;
+    state.bpValid            = _bpValid;
+    state.bpStrips           = _bpStrips;
+    state.bpStop             = _bpStop;
+    state.bpReason           = _bpReason;
+    state.bpTime             = _bpTime;
     return state;
 }
 
@@ -901,6 +944,9 @@ void SprayAreaComplexItem::_applyState(const EditState &state)
     if (sprayedChangedNow) {
         _rebuildSprayedVariant();
         emit sprayedChanged();
+    }
+    if (_bpValid != state.bpValid || (state.bpValid && !sameStrips(_bpStrips, state.bpStrips))) {
+        _setBreakpoint(state.bpValid, state.bpStrips, state.bpStop, state.bpReason, state.bpTime);
     }
 
     // Settings and boundary first; each change regenerates the passes.
@@ -1316,16 +1362,23 @@ void SprayAreaComplexItem::_trackVehicle(Vehicle *vehicle)
     }
 
     // While the drone flies the mission, remember where it is; when it leaves
-    // Mission mode (Hold, Return, a failsafe) the last fix is where it stopped.
+    // Mission mode (Hold, Return, a failsafe) the last fix is where it stopped,
+    // and that's saved as a breakpoint to resume from.
     auto update = [this]() {
         Vehicle *v = _trackedVehicle.data();
         if (!v || !v->missionManager()) {
             return;
         }
+        const bool wasInMission = _trackInMission;
         _trackInMission = v->flightMode() == v->missionFlightMode();
         if (_trackInMission && v->coordinate().isValid()) {
             _trackIndex = v->missionManager()->currentIndex();
             _trackPos   = v->coordinate();
+        }
+        if (wasInMission && !_trackInMission && v->flying() && !_returnUploading) {
+            _recordBreakpoint(v, v->flightMode());
+        } else if (!wasInMission && _trackInMission && _bpValid && _droneFliesThisPlan(v)) {
+            discardBreakpoint();   // carrying on with the same mission: nothing to resume
         }
     };
     _trackConnections << connect(vehicle, &Vehicle::coordinateChanged, this, update);
@@ -1387,16 +1440,24 @@ QString SprayAreaComplexItem::markSprayedFromDrone()
     if (vehicle->flightMode() == vehicle->missionFlightMode()) {
         return tr("The drone is still flying the mission. Pause it first (Hold), then mark what's sprayed.");
     }
+    if (_bpValid) {
+        resumeFromBreakpoint();   // the drone's mission may be the way back by now
+        return QString();
+    }
     return _markSprayed(vehicle);
 }
 
-QString SprayAreaComplexItem::_markSprayed(Vehicle *vehicle)
+bool SprayAreaComplexItem::_sprayedSoFar(Vehicle *vehicle, std::vector<spray::Strip> &strips,
+                                         spray::LatLon &stopPoint, QString &error)
 {
+    strips.clear();
     if (!vehicle || !vehicle->missionManager()) {
-        return tr("No drone is connected.");
+        error = tr("No drone is connected.");
+        return false;
     }
     if (_route.pointCount() < 2) {
-        return tr("This Spray Area has no route to compare with.");
+        error = tr("This Spray Area has no route to compare with.");
+        return false;
     }
 
     MissionManager            *manager = vehicle->missionManager();
@@ -1408,7 +1469,8 @@ QString SprayAreaComplexItem::_markSprayed(Vehicle *vehicle)
         current = manager->currentIndex();
     }
     if (items.isEmpty() || current < 0) {
-        return tr("The drone hasn't reported any progress on its mission yet.");
+        error = tr("The drone hasn't reported any progress on its mission yet.");
+        return false;
     }
 
     // The route as flown, and where each of its points is in the drone's mission.
@@ -1445,16 +1507,21 @@ QString SprayAreaComplexItem::_markSprayed(Vehicle *vehicle)
             break;
         }
         if (seqOf[i] < 0) {
-            return tr("The drone's mission isn't this plan. Open the plan the drone is flying, or upload this one first.");
+            error = tr("The drone's mission isn't this plan. Open the plan the drone is flying, or upload this one first.");
+            return false;
         }
+    }
+
+    if (current > seqOf.back()) {
+        error = tr("The drone had finished the spray route.");
+        return false;
     }
 
     // Legs done: those ending before the waypoint it was flying to. The leg it
     // was on counts up to where it stopped.
     const QGeoCoordinate stoppedAt = (_trackedVehicle == vehicle && _trackPos.isValid()) ? _trackPos : vehicle->coordinate();
     const double         width     = _swathWidthFact.rawValue().toDouble();
-    std::vector<spray::Strip> strips;
-    spray::LatLon             stopPoint = points.front();
+    stopPoint = points.front();
     for (size_t i = 1; i < points.size(); ++i) {
         if (seqOf[i] < current) {
             stopPoint = points[i];
@@ -1481,12 +1548,29 @@ QString SprayAreaComplexItem::_markSprayed(Vehicle *vehicle)
         }
     }
     if (strips.empty()) {
-        return tr("Nothing has been sprayed on this mission yet.");
+        error = tr("Nothing has been sprayed on this mission yet.");
+        return false;
     }
+    return true;
+}
 
+QString SprayAreaComplexItem::_markSprayed(Vehicle *vehicle)
+{
+    std::vector<spray::Strip> strips;
+    spray::LatLon             stopPoint;
+    QString                   error;
+    if (!_sprayedSoFar(vehicle, strips, stopPoint, error)) {
+        return error;
+    }
+    _applySprayed(strips, stopPoint, vehicle);
+    return QString();
+}
+
+void SprayAreaComplexItem::_applySprayed(const std::vector<spray::Strip> &strips, const spray::LatLon &stopPoint, Vehicle *vehicle)
+{
     _sprayed.insert(_sprayed.end(), strips.begin(), strips.end());
-    const QGeoCoordinate here = vehicle->coordinate();
-    if (vehicle->flying() && here.isValid()) {
+    const QGeoCoordinate here = vehicle ? vehicle->coordinate() : QGeoCoordinate();
+    if (vehicle && vehicle->flying() && here.isValid()) {
         // In the air: carry on from where it's waiting.
         _hasResumeFrom = true;
         _resumeFrom    = { here.latitude(), here.longitude() };
@@ -1508,7 +1592,7 @@ QString SprayAreaComplexItem::_markSprayed(Vehicle *vehicle)
     QObject::disconnect(_sendCompleteConnection);
     if (_hasResumeFrom) {
         QPointer<Vehicle> target = vehicle;
-        _sendCompleteConnection = connect(manager, &PlanManager::sendComplete, this, [this, target](bool error) {
+        _sendCompleteConnection = connect(vehicle->missionManager(), &PlanManager::sendComplete, this, [this, target](bool error) {
             if (_returnUploading) {
                 return;   // that was SprayGCS's Return route, not this plan
             }
@@ -1523,7 +1607,91 @@ QString SprayAreaComplexItem::_markSprayed(Vehicle *vehicle)
             }
         });
     }
-    return QString();
+}
+
+bool SprayAreaComplexItem::_droneFliesThisPlan(Vehicle *vehicle) const
+{
+    if (!vehicle || !vehicle->missionManager()) {
+        return false;
+    }
+    const spray::SprayRoute flown = _routeReversed ? _route.reversed() : _route;
+    if (flown.pointCount() < 2) {
+        return false;
+    }
+    const QList<MissionItem *> &items = vehicle->missionManager()->missionItems();
+    auto inMission = [&items](const spray::LatLon &p) {
+        const QGeoCoordinate point(p.lat, p.lon);
+        return std::any_of(items.cbegin(), items.cend(), [&point](const MissionItem *item) {
+            return item->command() == MAV_CMD_NAV_WAYPOINT && item->coordinate().distanceTo(point) < 0.5;
+        });
+    };
+    return inMission(flown.points().front()) && inMission(flown.points().back());
+}
+
+void SprayAreaComplexItem::_recordBreakpoint(Vehicle *vehicle, const QString &reason)
+{
+    // A Return from SprayGCS pauses first, so the drone reports Hold right after.
+    const QDateTime now = QDateTime::currentDateTime();
+    if (_bpValid && _bpTime.isValid() && _bpTime.secsTo(now) < 5) {
+        return;
+    }
+    std::vector<spray::Strip> strips;
+    spray::LatLon             stop;
+    QString                   error;
+    if (!_sprayedSoFar(vehicle, strips, stop, error)) {
+        qCDebug(SprayAreaLog) << "No breakpoint:" << error;
+        return;
+    }
+    _setBreakpoint(true, strips, stop, reason, now);
+    setDirty(true);
+    _noteChange();
+    if (PlanMasterController *master = masterController()) {
+        master->saveJobPlan();
+    }
+    QGC::showAppMessage(tr("Breakpoint saved where spraying stopped (%1). To finish the job later, open Plan and tap Resume From Breakpoint.").arg(reason));
+}
+
+void SprayAreaComplexItem::_setBreakpoint(bool valid, const std::vector<spray::Strip> &strips, const spray::LatLon &stop,
+                                          const QString &reason, const QDateTime &time)
+{
+    _bpValid         = valid;
+    _bpStrips        = valid ? strips : std::vector<spray::Strip>();
+    _bpStop          = valid ? stop : spray::LatLon {};
+    _bpReason        = valid ? reason : QString();
+    _bpTime          = valid ? time : QDateTime();
+    _bpStripsVariant = stripRectangles(_bpStrips);
+    emit breakpointChanged();
+}
+
+QString SprayAreaComplexItem::breakpointText() const
+{
+    if (!_bpValid) {
+        return QString();
+    }
+    const QString when = _bpTime.isValid() ? QLocale().toString(_bpTime, QLocale::ShortFormat) : QString();
+    return _bpReason.isEmpty() ? tr("Spraying stopped %1").arg(when)
+                               : tr("Spraying stopped %1 (%2)").arg(when, _bpReason);
+}
+
+void SprayAreaComplexItem::resumeFromBreakpoint()
+{
+    if (!_bpValid) {
+        return;
+    }
+    const std::vector<spray::Strip> strips = _bpStrips;
+    const spray::LatLon             stop   = _bpStop;
+    _setBreakpoint(false, {}, {}, QString(), QDateTime());
+    _applySprayed(strips, stop, MultiVehicleManager::instance()->activeVehicle());
+}
+
+void SprayAreaComplexItem::discardBreakpoint()
+{
+    if (!_bpValid) {
+        return;
+    }
+    _setBreakpoint(false, {}, {}, QString(), QDateTime());
+    setDirty(true);
+    _noteChange();
 }
 
 QPointer<SprayAreaComplexItem> SprayAreaComplexItem::s_planViewItem;
@@ -1553,24 +1721,13 @@ QString SprayAreaComplexItem::returnViaEntrySide()
         return tr("The drone's position isn't known.");
     }
 
-    // The drone should be flying this plan (the route's ends are in its mission).
-    const spray::SprayRoute flown = _routeReversed ? _route.reversed() : _route;
-    auto inMission = [&](const spray::LatLon &p) {
-        for (const MissionItem *item : vehicle->missionManager()->missionItems()) {
-            if (item->command() == MAV_CMD_NAV_WAYPOINT
-                    && item->coordinate().distanceTo(QGeoCoordinate(p.lat, p.lon)) < 0.5) {
-                return true;
-            }
-        }
-        return false;
-    };
-    if (flown.pointCount() < 2 || !inMission(flown.points().front()) || !inMission(flown.points().back())) {
+    if (!_droneFliesThisPlan(vehicle)) {
         return tr("The drone isn't flying this plan: its own Return is used.");
     }
 
-    // Stop where it is, and note what's sprayed (for resuming later).
+    // Stop where it is, and save a breakpoint (for resuming later).
     vehicle->pauseVehicle();
-    _markSprayed(vehicle);
+    _recordBreakpoint(vehicle, tr("Return"));
 
     // The way back, mirroring the way in: inside the field to the point of the
     // entry side(s) best for here, across it, straight to takeoff, land.
@@ -1622,7 +1779,10 @@ QString SprayAreaComplexItem::returnViaEntrySide()
         }
         target->setCurrentMissionSequence(1);
         target->setFlightMode(target->missionFlightMode());
-        QGC::showAppMessage(tr("Returning through the entry side, then straight to takeoff. What's sprayed is marked, so the job can be resumed."));
+        QGC::showAppMessage(tr("Returning through the entry side, then straight to takeoff. A breakpoint is saved where spraying stopped, so the job can be resumed."));
+        if (PlanMasterController *master = masterController()) {
+            master->saveJobPlan();   // the drone's mission is now the way back: keep the job for after a restart
+        }
     });
     vehicle->missionManager()->writeMissionItems(items);
     return QString();
@@ -1645,19 +1805,7 @@ void SprayAreaComplexItem::clearSprayed()
 
 void SprayAreaComplexItem::_rebuildSprayedVariant()
 {
-    _sprayedStripsVariant.clear();
-    for (const spray::Strip &strip : _sprayed) {
-        const QGeoCoordinate a(strip.a.lat, strip.a.lon);
-        const QGeoCoordinate b(strip.b.lat, strip.b.lon);
-        const double azimuth = a.azimuthTo(b);
-        const double half    = strip.widthM / 2.0;
-        QVariantList corners;
-        corners.append(QVariant::fromValue(a.atDistanceAndAzimuth(half, azimuth - 90.0)));
-        corners.append(QVariant::fromValue(b.atDistanceAndAzimuth(half, azimuth - 90.0)));
-        corners.append(QVariant::fromValue(b.atDistanceAndAzimuth(half, azimuth + 90.0)));
-        corners.append(QVariant::fromValue(a.atDistanceAndAzimuth(half, azimuth + 90.0)));
-        _sprayedStripsVariant.append(QVariant(corners));
-    }
+    _sprayedStripsVariant = stripRectangles(_sprayed);
 }
 
 int SprayAreaComplexItem::_resumeStartSeq() const
@@ -2041,6 +2189,18 @@ void SprayAreaComplexItem::save(QJsonArray &missionItems)
     if (_hasResumeFrom) {
         saveObject[_jsonResumeFromKey] = QJsonArray { _resumeFrom.lat, _resumeFrom.lon };
     }
+    if (_bpValid) {
+        QJsonArray strips;
+        for (const spray::Strip &strip : _bpStrips) {
+            strips.append(QJsonArray { strip.a.lat, strip.a.lon, strip.b.lat, strip.b.lon, strip.widthM });
+        }
+        QJsonObject breakpoint;
+        breakpoint[QStringLiteral("strips")] = strips;
+        breakpoint[QStringLiteral("stop")]   = QJsonArray { _bpStop.lat, _bpStop.lon };
+        breakpoint[QStringLiteral("reason")] = _bpReason;
+        breakpoint[QStringLiteral("time")]   = _bpTime.toString(Qt::ISODate);
+        saveObject[_jsonBreakpointKey] = breakpoint;
+    }
 
     missionItems.append(saveObject);
 }
@@ -2118,20 +2278,35 @@ bool SprayAreaComplexItem::load(const QJsonObject &complexObject,
     _startNear    = _hasStartNear ? spray::LatLon { startNear[0].toDouble(), startNear[1].toDouble() } : spray::LatLon {};
 
     // Resuming a job (also before the boundary).
-    _sprayed.clear();
-    for (const QJsonValue &value : complexObject[_jsonSprayedKey].toArray()) {
-        const QJsonArray strip = value.toArray();
-        if (strip.size() >= 5 && strip[4].toDouble() > 0.0) {
-            _sprayed.push_back({ { strip[0].toDouble(), strip[1].toDouble() },
-                                 { strip[2].toDouble(), strip[3].toDouble() },
-                                 strip[4].toDouble() });
+    auto readStrips = [](const QJsonArray &array) {
+        std::vector<spray::Strip> strips;
+        for (const QJsonValue &value : array) {
+            const QJsonArray strip = value.toArray();
+            if (strip.size() >= 5 && strip[4].toDouble() > 0.0) {
+                strips.push_back({ { strip[0].toDouble(), strip[1].toDouble() },
+                                   { strip[2].toDouble(), strip[3].toDouble() },
+                                   strip[4].toDouble() });
+            }
         }
-    }
+        return strips;
+    };
+    _sprayed = readStrips(complexObject[_jsonSprayedKey].toArray());
     const QJsonArray resumeFrom = complexObject[_jsonResumeFromKey].toArray();
     _hasResumeFrom = resumeFrom.size() >= 2;
     _resumeFrom    = _hasResumeFrom ? spray::LatLon { resumeFrom[0].toDouble(), resumeFrom[1].toDouble() } : spray::LatLon {};
     _rebuildSprayedVariant();
     emit sprayedChanged();
+
+    const QJsonObject               breakpoint = complexObject[_jsonBreakpointKey].toObject();
+    const std::vector<spray::Strip> bpStrips   = readStrips(breakpoint[QStringLiteral("strips")].toArray());
+    const QJsonArray                bpStop     = breakpoint[QStringLiteral("stop")].toArray();
+    if (!bpStrips.empty() && bpStop.size() >= 2) {
+        _setBreakpoint(true, bpStrips, { bpStop[0].toDouble(), bpStop[1].toDouble() },
+                       breakpoint[QStringLiteral("reason")].toString(),
+                       QDateTime::fromString(breakpoint[QStringLiteral("time")].toString(), Qt::ISODate));
+    } else {
+        _setBreakpoint(false, {}, {}, QString(), QDateTime());
+    }
 
     _fieldPolygon.clear();
     if (!_fieldPolygon.loadFromJson(complexObject, true /* required */, errorString)) {

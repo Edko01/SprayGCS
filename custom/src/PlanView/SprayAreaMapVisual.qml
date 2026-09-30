@@ -69,6 +69,7 @@ Item {
     readonly property color _startColor:    "#34c759"
     readonly property color _endColor:      "#b91c1c"
     readonly property color _sprayedColor:  "#9ca3af"   // resuming: ground already sprayed (grey)
+    readonly property color _breakpointColor: "#f97316" // where spraying stopped, and what was sprayed before it
     readonly property real  _handleSize:    ScreenTools.defaultFontPixelHeight * 1.1
     readonly property real  _labelMinZoom:  17          // show section lengths from this zoom level in
     readonly property real  _labelMinLenM:  15          // ...on sections at least this long
@@ -426,6 +427,73 @@ Item {
             Component.onDestruction: {
                 if (_strip) {
                     _strip.destroy()
+                }
+            }
+        }
+    }
+
+    // ----- breakpoint: where spraying stopped, and what was sprayed before it --
+    Component {
+        id: breakpointStripComponent
+
+        MapPolygon {
+            property var corners
+
+            color:        _breakpointColor
+            opacity:      0.3 * _root.opacity
+            border.width: 0
+            path:         corners ? corners : []
+            visible:      !_root._shapingBoundary
+            z:            QGroundControl.zOrderMapItems - 1.8
+        }
+    }
+
+    Repeater {
+        model: _missionItem.breakpointStrips
+
+        delegate: Item {
+            property var _strip
+
+            Component.onCompleted: {
+                _strip = breakpointStripComponent.createObject(map, { "corners": modelData })
+                map.addMapItem(_strip)
+            }
+            Component.onDestruction: {
+                if (_strip) {
+                    _strip.destroy()
+                }
+            }
+        }
+    }
+
+    Component {
+        id: breakpointMarkerComponent
+
+        MapQuickItem {
+            anchorPoint.x: sourceItem.width  / 2
+            anchorPoint.y: sourceItem.height / 2
+            coordinate:    _missionItem.breakpointCoordinate
+            visible:       _missionItem.hasBreakpoint && !_root._shapingBoundary
+            opacity:       _root.opacity
+            z:             QGroundControl.zOrderMapItems + 0.4
+
+            sourceItem: Rectangle {
+                width:        ScreenTools.defaultFontPixelHeight * 1.8
+                height:       width
+                radius:       width / 2
+                color:        _breakpointColor
+                border.color: "white"
+                border.width: 2
+
+                QGCLabel {
+                    anchors.centerIn: parent
+                    text:             "B"
+                    color:            "white"
+                    font.bold:        true
+                }
+                QGCMouseArea {
+                    fillItem:  parent
+                    onClicked: _root.clicked(_missionItem.sequenceNumber)
                 }
             }
         }
@@ -1118,7 +1186,7 @@ Item {
     Component.onCompleted: {
         objMgr.createObjects(
             [boundaryOutlineComponent, boundaryLineComponent, sprayAreaComponent, passPreviewComponent, endMarkerComponent,
-             previewLineComponent, previewPointComponent],
+             previewLineComponent, previewPointComponent, breakpointMarkerComponent],
             map,
             true /* parentObjectIsMap */)
         _startMarker = startMarkerComponent.createObject(map)

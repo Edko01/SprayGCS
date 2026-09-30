@@ -8,6 +8,7 @@
 #include "QGCMapPolygon.h"
 #include "SettingsFact.h"
 
+#include <QtCore/QDateTime>
 #include <QtCore/QList>
 #include <QtCore/QPointer>
 #include <QtCore/QTimer>
@@ -114,6 +115,12 @@ public:
     Q_PROPERTY(bool         resumeInAir      READ resumeInAir      NOTIFY sprayedChanged)   ///< route starts at the waiting drone
     Q_PROPERTY(double       sprayedDoneAcres READ sprayedDoneAcres NOTIFY pathUpdated)
     Q_PROPERTY(bool         allSprayed       READ allSprayed       NOTIFY pathUpdated)      ///< nothing left to spray
+    // Breakpoint: saved automatically when the drone leaves the mission mid-route
+    // (Pause, Return, low battery, empty tank...), to resume from later.
+    Q_PROPERTY(bool           hasBreakpoint        READ hasBreakpoint        NOTIFY breakpointChanged)
+    Q_PROPERTY(QGeoCoordinate breakpointCoordinate READ breakpointCoordinate NOTIFY breakpointChanged)
+    Q_PROPERTY(QString        breakpointText       READ breakpointText       NOTIFY breakpointChanged)
+    Q_PROPERTY(QVariantList   breakpointStrips     READ breakpointStrips     NOTIFY breakpointChanged)   ///< sprayed before the break
 
     // Undo / redo of boundary, settings and route edits.
     Q_PROPERTY(bool         canUndo          READ canUndo          NOTIFY undoRedoChanged)
@@ -184,6 +191,10 @@ public:
     bool         resumeInAir()      const { return _hasResumeFrom; }
     double       sprayedDoneAcres() const { return _result.sprayedDoneM2 / 4046.8564224; }
     bool         allSprayed()       const { return _result.allSprayed; }
+    bool           hasBreakpoint()        const { return _bpValid; }
+    QGeoCoordinate breakpointCoordinate() const { return _bpValid ? QGeoCoordinate(_bpStop.lat, _bpStop.lon) : QGeoCoordinate(); }
+    QString        breakpointText()       const;
+    QVariantList   breakpointStrips()     const { return _bpStripsVariant; }
     bool         canUndo()          const { return _changePending || !_undoStack.isEmpty(); }
     bool         canRedo()          const { return !_changePending && !_redoStack.isEmpty(); }
 
@@ -197,6 +208,9 @@ public:
     Q_INVOKABLE QString markSprayedFromDrone();
     /// Back to spraying the whole field.
     Q_INVOKABLE void    clearSprayed();
+    /// Plan only what's left from the breakpoint (like Mark Sprayed So Far).
+    Q_INVOKABLE void    resumeFromBreakpoint();
+    Q_INVOKABLE void    discardBreakpoint();
 
     /// Return (RTH) from SprayGCS for a mode A plan: the way it came in, backwards.
     /// Marks what's sprayed, then sends the drone inside the field to the point of
@@ -303,6 +317,7 @@ signals:
     void fieldNameChanged();
     void undoRedoChanged();
     void sprayedChanged();
+    void breakpointChanged();
 
 private slots:
     void _setDirty();
@@ -327,6 +342,11 @@ private:
         std::vector<spray::Strip>  sprayed;
         bool                       hasResumeFrom = false;
         spray::LatLon              resumeFrom;
+        bool                       bpValid = false;
+        std::vector<spray::Strip>  bpStrips;
+        spray::LatLon              bpStop;
+        QString                    bpReason;
+        QDateTime                  bpTime;
 
         bool operator==(const EditState &other) const;
         bool operator!=(const EditState &other) const { return !(*this == other); }
@@ -358,6 +378,13 @@ private:
     int  _resumeStartSeq() const;           ///< plan sequence number of the route's first waypoint
     void _applyReturnSettings(Vehicle *vehicle);   ///< after an upload: the drone's Return to suit this plan
     QString _markSprayed(Vehicle *vehicle);        ///< markSprayedFromDrone() without the paused check
+    /// What the drone has sprayed of this plan's route so far, and where it stopped.
+    bool _sprayedSoFar(Vehicle *vehicle, std::vector<spray::Strip> &strips, spray::LatLon &stopPoint, QString &error);
+    void _applySprayed(const std::vector<spray::Strip> &strips, const spray::LatLon &stopPoint, Vehicle *vehicle);
+    void _recordBreakpoint(Vehicle *vehicle, const QString &reason);
+    void _setBreakpoint(bool valid, const std::vector<spray::Strip> &strips, const spray::LatLon &stop,
+                        const QString &reason, const QDateTime &time);
+    bool _droneFliesThisPlan(Vehicle *vehicle) const;
     void _emitRouteChanged(int oldLastSeq);
     void _rebuildRouteVariants();
 
@@ -420,6 +447,12 @@ private:
     QMetaObject::Connection       _sendCompleteConnection;  ///< after an upload, continue from the drone
     QMetaObject::Connection       _returnConnection;        ///< Return from SprayGCS: route sent, fly it
     bool                          _returnUploading = false; ///< the upload is the Return route, not this plan
+    bool                          _bpValid = false;         ///< breakpoint: where spraying stopped...
+    std::vector<spray::Strip>     _bpStrips;                ///< ...what was sprayed up to it (not yet applied)
+    spray::LatLon                 _bpStop;
+    QString                       _bpReason;                ///< flight mode it went into
+    QDateTime                     _bpTime;
+    QVariantList                  _bpStripsVariant;
     static QPointer<SprayAreaComplexItem> s_planViewItem;
 
     // Undo / redo. Changes are grouped: a drag, typing, or a traced boundary
@@ -462,6 +495,7 @@ private:
     static constexpr const char *_jsonTakeoffKey         = "takeoff";        ///< [lat, lon] for the onboard app
     static constexpr const char *_jsonSprayedKey         = "sprayed";        ///< [[latA, lonA, latB, lonB, widthM], ...] already sprayed
     static constexpr const char *_jsonResumeFromKey      = "resumeFrom";     ///< [lat, lon]: route starts at the waiting drone
+    static constexpr const char *_jsonBreakpointKey      = "breakpoint";     ///< {strips, stop, reason, time}: where spraying stopped
 
     static constexpr double      kMinBufferM             = 0.9144;           ///< 3 ft
     static constexpr double      kMaxBufferM             = 50.0;

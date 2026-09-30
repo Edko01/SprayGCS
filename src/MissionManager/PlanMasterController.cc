@@ -15,8 +15,12 @@
 #include "RallyPointManager.h"
 #include "QGCLoggingCategory.h"
 
+#include <QtCore/QDir>
+#include <QtCore/QFile>
 #include <QtCore/QFileInfo>
+#include <QtCore/QJsonArray>
 #include <QtCore/QJsonDocument>
+#include <QtCore/QStandardPaths>
 
 QGC_LOGGING_CATEGORY(PlanMasterControllerLog, "PlanManager.PlanMasterController")
 
@@ -311,6 +315,9 @@ void PlanMasterController::_sendRallyPointsComplete(void)
     _sendSequence = SyncSequence::Idle;
     qCDebug(PlanMasterControllerLog) << "PlanMasterController::sendToVehicle Rally Point send complete";
     _setDirtyForUpload(false);
+    if (!_flyView) {
+        saveJobPlan();
+    }
     if (_deleteWhenSendCompleted) {
         this->deleteLater();
     }
@@ -617,6 +624,10 @@ void PlanMasterController::_showPlanFromManagerVehicle(void)
         return;
     }
 
+    if (!_flyView && _restoreJobPlan()) {
+        return;
+    }
+
     // The crazy if structure is to handle the load propagating by itself through the system
     if (!_missionController.showPlanFromManagerVehicle()) {
         if (!_geoFenceController.showPlanFromManagerVehicle()) {
@@ -631,6 +642,107 @@ void PlanMasterController::_showPlanFromManagerVehicle(void)
     _rallyPointController.setDirty(false);
     _clearCurrentPlanFile();
     _setDirtyStates(false, false);
+}
+
+QString PlanMasterController::_jobPlanPath()
+{
+    return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/current-job.plan");
+}
+
+QJsonArray PlanMasterController::_droneMissionFingerprint() const
+{
+    // Commands in order, plus each waypoint's position: enough to tell one
+    // uploaded plan from another, and robust to the float rounding of a download.
+    QJsonArray fingerprint;
+    if (!_managerVehicle || _managerVehicle == _controllerVehicle || !_managerVehicle->missionManager()) {
+        return fingerprint;
+    }
+    for (const MissionItem* item : _managerVehicle->missionManager()->missionItems()) {
+        QJsonArray entry { static_cast<int>(item->command()) };
+        if (item->command() == MAV_CMD_NAV_WAYPOINT) {
+            entry.append(item->param5());
+            entry.append(item->param6());
+        }
+        fingerprint.append(entry);
+    }
+    return fingerprint;
+}
+
+bool PlanMasterController::_sameMissionFingerprint(const QJsonArray& saved, const QJsonArray& now)
+{
+    if (saved.isEmpty() || saved.count() != now.count()) {
+        return false;
+    }
+    for (qsizetype i = 0; i < saved.count(); i++) {
+        const QJsonArray a = saved[i].toArray();
+        const QJsonArray b = now[i].toArray();
+        if (a.count() != b.count() || a.isEmpty() || a[0].toInt() != b[0].toInt()) {
+            return false;
+        }
+        for (qsizetype j = 1; j < a.count(); j++) {
+            if (qAbs(a[j].toDouble() - b[j].toDouble()) > 1e-6) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+void PlanMasterController::saveJobPlan()
+{
+    const QJsonArray fingerprint = _droneMissionFingerprint();
+    if (fingerprint.isEmpty()) {
+        return;
+    }
+    QJsonObject planJson = saveToJson().object();
+    QJsonObject job;
+    job[QStringLiteral("droneMission")] = fingerprint;
+    job[QStringLiteral("sourceFile")]   = _currentPlanFile;
+    job[QStringLiteral("planOnDrone")]  = !_dirtyForUpload;
+    planJson[QStringLiteral("sprayGcsJob")] = job;
+
+    const QString path = _jobPlanPath();
+    QDir().mkpath(QFileInfo(path).absolutePath());
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        qCWarning(PlanMasterControllerLog) << "Couldn't save the job plan" << path << file.errorString();
+        return;
+    }
+    file.write(QJsonDocument(planJson).toJson());
+}
+
+bool PlanMasterController::_restoreJobPlan()
+{
+    QFile file(_jobPlanPath());
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return false;
+    }
+    const QByteArray  bytes = file.readAll();
+    const QJsonObject job   = QJsonDocument::fromJson(bytes).object()[QStringLiteral("sprayGcsJob")].toObject();
+    if (!_sameMissionFingerprint(job[QStringLiteral("droneMission")].toArray(), _droneMissionFingerprint())) {
+        return false;
+    }
+
+    QString errorString;
+    if (!_loadPlanJson(bytes, errorString)) {
+        qCWarning(PlanMasterControllerLog) << "Couldn't reopen the job plan:" << errorString;
+        return false;
+    }
+    _missionController.setDirty(false);
+    _geoFenceController.setDirty(false);
+    _rallyPointController.setDirty(false);
+    const QString sourceFile = job[QStringLiteral("sourceFile")].toString();
+    if (!sourceFile.isEmpty() && QFileInfo::exists(sourceFile)) {
+        if (_currentPlanFile != sourceFile) {
+            _currentPlanFile = sourceFile;
+            emit currentPlanFileChanged();
+        }
+    } else {
+        _clearCurrentPlanFile();
+    }
+    _setDirtyStates(false, !job[QStringLiteral("planOnDrone")].toBool(true));
+    QGC::showAppMessage(tr("Reopened the plan the drone has been flying, with its progress."));
+    return true;
 }
 
 void PlanMasterController::_initialPlanRequestCompleteChanged(bool initialPlanRequestComplete)

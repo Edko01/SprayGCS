@@ -8,6 +8,7 @@
 #include "RallyPointController.h"
 #include "QGCMAVLinkTypes.h"
 
+class QJsonArray;
 class QmlObjectListModel;
 class MultiVehicleManager;
 class Vehicle;
@@ -113,6 +114,10 @@ public:
 
     QJsonDocument saveToJson();
 
+    /// Keeps a copy of the plan the drone is flying (with its progress), so the
+    /// Plan view can reopen it instead of the raw mission after a restart.
+    void saveJobPlan();
+
     Vehicle* controllerVehicle(void) { return _controllerVehicle; }
     Vehicle* managerVehicle(void) { return _managerVehicle; }
 
@@ -169,6 +174,10 @@ private:
     void _setDirtyStates(bool dirtyForSave, bool dirtyForUpload);
     void _clearCurrentPlanFile();
     bool _loadPlanJson(const QByteArray& bytes, QString& errorString);
+    bool _restoreJobPlan();
+    static QString _jobPlanPath();
+    QJsonArray _droneMissionFingerprint() const;
+    static bool _sameMissionFingerprint(const QJsonArray& saved, const QJsonArray& now);
 
 #ifdef QGC_UNITTEST_BUILD
     // Used by unit tests to set dirty flags for initial state

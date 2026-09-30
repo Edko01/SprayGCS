@@ -156,5 +156,14 @@ Rectangle {
             text:                _sprayArea ? qsTr("Already sprayed: %1 ac").arg(_sprayArea.sprayedDoneAcres.toFixed(1)) : ""
             visible:             _sprayArea !== null && _sprayArea.hasSprayed
         }
+
+        QGCLabel {
+            Layout.fillWidth:    true
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode:            Text.WordWrap
+            color:               "#f97316"
+            text:                qsTr("Breakpoint saved. Select the Spray Area to resume from it.")
+            visible:             _sprayArea !== null && _sprayArea.hasBreakpoint
+        }
     }
 }

@@ -41,6 +41,7 @@ Rectangle {
     readonly property color _accentText: "#111111"
     readonly property color _sideColor:  "#16a34a"   // green, as XAG One marks sides with their own buffer
     readonly property color _transitColor: "#00b3ff" // matches the transit legs on the map
+    readonly property color _breakpointColor: "#f97316" // orange, matches the breakpoint marker on the map
     readonly property bool  _routeTransit: missionItem.transitMode.rawValue === 1
 
     // Polygon capture callbacks used by QGCMapPolygonVisuals.
@@ -155,16 +156,89 @@ Rectangle {
             Layout.fillWidth: true
             spacing:          _margin / 2
             visible:          !missionItem.boundaryEditMode && missionItem.fieldPolygon.isValid
-                              && (QGroundControl.multiVehicleManager.activeVehicle !== null || missionItem.hasSprayed)
+                              && (QGroundControl.multiVehicleManager.activeVehicle !== null || missionItem.hasSprayed
+                                  || missionItem.hasBreakpoint)
 
             property string _message: ""
+
+            // Saved automatically when the drone left the mission mid-route.
+            Rectangle {
+                Layout.fillWidth: true
+                implicitHeight:   breakpointColumn.height + _margin
+                radius:           _radius
+                color:            "transparent"
+                border.color:     _breakpointColor
+                border.width:     2
+                visible:          missionItem.hasBreakpoint
+
+                ColumnLayout {
+                    id:      breakpointColumn
+                    anchors {
+                        left:    parent.left
+                        right:   parent.right
+                        top:     parent.top
+                        margins: _margin / 2
+                    }
+                    spacing: _margin / 2
+
+                    QGCLabel {
+                        Layout.fillWidth: true
+                        wrapMode:         Text.WordWrap
+                        font.bold:        true
+                        text:             qsTr("Breakpoint (B on the map)")
+                    }
+                    QGCLabel {
+                        Layout.fillWidth: true
+                        wrapMode:         Text.WordWrap
+                        text:             qsTr("%1. Sprayed before it is shaded. Tap Resume From Breakpoint to plan only what's left; you can change the settings for the rest, then upload.").arg(missionItem.breakpointText)
+                    }
+                    Rectangle {
+                        Layout.fillWidth: true
+                        implicitHeight:   _rowHeight
+                        radius:           _radius
+                        color:            _breakpointColor
+
+                        QGCLabel {
+                            anchors.centerIn: parent
+                            text:             qsTr("Resume From Breakpoint")
+                            font.pointSize:   ScreenTools.mediumFontPointSize
+                            font.bold:        true
+                            color:            "black"
+                        }
+                        QGCMouseArea {
+                            anchors.fill: parent
+                            onClicked: {
+                                resumeSection._message = ""
+                                missionItem.resumeFromBreakpoint()
+                            }
+                        }
+                    }
+                    Rectangle {
+                        Layout.fillWidth: true
+                        implicitHeight:   _rowHeight
+                        radius:           _radius
+                        color:            qgcPal.windowShade
+
+                        QGCLabel {
+                            anchors.centerIn: parent
+                            text:             qsTr("Discard Breakpoint")
+                            font.pointSize:   ScreenTools.mediumFontPointSize
+                            font.bold:        true
+                        }
+                        QGCMouseArea {
+                            anchors.fill: parent
+                            onClicked:    missionItem.discardBreakpoint()
+                        }
+                    }
+                }
+            }
 
             Rectangle {
                 Layout.fillWidth: true
                 implicitHeight:   _rowHeight
                 radius:           _radius
                 color:            qgcPal.windowShade
-                visible:          QGroundControl.multiVehicleManager.activeVehicle !== null
+                visible:          QGroundControl.multiVehicleManager.activeVehicle !== null && !missionItem.hasBreakpoint
 
                 QGCLabel {
                     anchors.centerIn: parent
@@ -190,7 +264,7 @@ Rectangle {
                 Layout.fillWidth: true
                 wrapMode:         Text.WordWrap
                 text:             qsTr("Mid-job, pause the drone (Hold) or land it, then tap this: the route is planned again over only what's left, and you can change the swath, angle and other settings for the rest.")
-                visible:          !missionItem.hasSprayed && resumeSection._message === ""
+                visible:          !missionItem.hasSprayed && !missionItem.hasBreakpoint && resumeSection._message === ""
             }
 
             QGCLabel {
