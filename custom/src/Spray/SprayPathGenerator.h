@@ -25,6 +25,14 @@ struct LatLon {
     double lon = 0.0;
 };
 
+// A strip of the field that has already been sprayed: the centre-line from a
+// to b, `widthM` wide (the swath it was sprayed with).
+struct Strip {
+    LatLon a;
+    LatLon b;
+    double widthM = 0.0;
+};
+
 struct Settings {
     double swathWidthM   = 6.0;   // spacing between pass centre-lines
     double passAngleDeg  = 0.0;   // pass direction, degrees clockwise from north
@@ -41,6 +49,14 @@ struct Settings {
     // the low end of the first pass.
     bool   hasStartNear  = false;
     LatLon startNear;
+    // Resuming a job: the parts of the spray area already sprayed. Passes (and
+    // the headland) are only laid out where there's still something to spray;
+    // stretches over sprayed ground are dropped. Empty = a fresh job.
+    std::vector<Strip> sprayed;
+    // Resuming in the air: the route starts here (where the drone is waiting),
+    // then goes inside the field to the nearest remaining pass.
+    bool   hasResumeFrom = false;
+    LatLon resumeFrom;
 };
 
 struct Result {
@@ -56,6 +72,8 @@ struct Result {
     double              sprayAreaM2 = 0.0;
     double              flightDistanceM = 0.0;
     double              sprayDistanceM = 0.0;   // length of the legs marked spray
+    double              sprayedDoneM2 = 0.0;    // part of the spray area already sprayed (Settings::sprayed)
+    bool                allSprayed = false;     // resuming, and nothing is left to spray
 };
 
 Result generate(const std::vector<LatLon>& boundary, const Settings& settings);

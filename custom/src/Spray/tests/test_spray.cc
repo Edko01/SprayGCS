@@ -387,6 +387,175 @@ int main()
         CHECK(dup.size() == 4 && std::isnan(dup[0]), "zero-length side should be NaN");
     }
 
+    // ---- resuming a job: only what's left is planned ----------------------------
+    {
+        std::printf("resume\n");
+        const std::vector<XY> rect { {0,0}, {200,0}, {200,100}, {0,100} };
+        const std::vector<LatLon> field = fromMetres(rect);
+        Settings base;
+        base.swathWidthM = 10.0;
+        base.passAngleDeg = 0.0;
+        base.edgeMarginM = 1.0;
+        base.headlandPass = false;
+        const Result full = generate(field, base);
+        CHECK(full.valid, "full plan invalid");
+
+        // Strips from the spray legs of a route, up to (not including) leg `upTo`.
+        auto flown = [](const Result& r, size_t upTo, double width) {
+            std::vector<Strip> strips;
+            for (size_t i = 1; i < r.flightPath.size() && i - 1 < upTo; ++i) {
+                if (r.legSpray[i - 1]) strips.push_back({ r.flightPath[i - 1], r.flightPath[i], width });
+            }
+            return strips;
+        };
+        // Share of the spray area covered by old strips plus the new route's spray legs.
+        auto combined = [](const Result& r, const std::vector<Strip>& old, double swath) {
+            std::vector<XY> area, path;
+            for (auto& p : r.sprayArea) area.push_back(toM(p));
+            for (auto& p : r.flightPath) path.push_back(toM(p));
+            double minX = 1e9, maxX = -1e9, minY = 1e9, maxY = -1e9;
+            for (auto& p : area) { minX = std::fmin(minX, p.x); maxX = std::fmax(maxX, p.x); minY = std::fmin(minY, p.y); maxY = std::fmax(maxY, p.y); }
+            int inside = 0, covered = 0;
+            for (double x = minX + 0.25; x <= maxX; x += 0.5) {
+                for (double y = minY + 0.25; y <= maxY; y += 0.5) {
+                    const XY p { x, y };
+                    if (!pointInPoly(p, area)) continue;
+                    inside++;
+                    bool c = false;
+                    for (const Strip& st : old) {
+                        if (segDist(p, toM(st.a), toM(st.b)) <= st.widthM / 2.0 + 0.05) { c = true; break; }
+                    }
+                    for (size_t i = 1; !c && i < path.size(); ++i) {
+                        if (r.legSpray[i - 1] && segDist(p, path[i - 1], path[i]) <= swath / 2.0 + 0.05) c = true;
+                    }
+                    covered += c;
+                }
+            }
+            return inside ? double(covered) / inside : 0.0;
+        };
+
+        // Half the legs flown, same settings: the rest of the passes, starting where the drone waits.
+        const size_t half = full.legSpray.size() / 2;
+        const std::vector<Strip> done = flown(full, half, base.swathWidthM);
+        Settings resume = base;
+        resume.sprayed = done;
+        resume.hasResumeFrom = true;
+        resume.resumeFrom = full.flightPath[half];
+        const Result rest = generate(field, resume);
+        CHECK(rest.valid, "resume plan invalid");
+        CHECK(!rest.allSprayed, "resume: should not be all sprayed");
+        if (rest.valid) {
+            const XY first = toM(rest.flightPath.front()), wait = toM(full.flightPath[half]);
+            CHECK(std::hypot(first.x - wait.x, first.y - wait.y) < 0.01, "resume: route should start where the drone waits");
+            CHECK(!rest.legSpray.front(), "resume: first leg should be transit");
+            const int flownPasses = int(done.size());
+            CHECK(rest.passCount == full.passCount - flownPasses, "resume: passes %d expected %d", rest.passCount, full.passCount - flownPasses);
+            const double cov = combined(rest, done, base.swathWidthM);
+            std::printf("  same settings: %d passes left, combined coverage %.4f, done %.0f m2\n", rest.passCount, cov, rest.sprayedDoneM2);
+            CHECK(cov > 0.985, "resume same settings coverage %.4f", cov);
+            CHECK(rest.sprayedDoneM2 > 0.3 * rest.sprayAreaM2 && rest.sprayedDoneM2 < 0.7 * rest.sprayAreaM2, "done area %.0f", rest.sprayedDoneM2);
+        }
+
+        // New swath and pass direction for the rest: still no real gap.
+        Settings changed = resume;
+        changed.swathWidthM = 7.0;
+        changed.passAngleDeg = 90.0;
+        const Result turned = generate(field, changed);
+        CHECK(turned.valid, "resume turned invalid");
+        if (turned.valid) {
+            const double cov = combined(turned, done, changed.swathWidthM);
+            std::printf("  new swath and angle: %d passes, combined coverage %.4f\n", turned.passCount, cov);
+            CHECK(cov > 0.98, "resume turned coverage %.4f", cov);
+            // The new passes shouldn't re-fly the sprayed half.
+            std::vector<XY> path;
+            for (auto& p : turned.flightPath) path.push_back(toM(p));
+            double sprayLen = 0, overLen = 0;
+            for (size_t i = 1; i < path.size(); ++i) {
+                if (!turned.legSpray[i - 1]) continue;
+                const double len = std::hypot(path[i].x - path[i-1].x, path[i].y - path[i-1].y);
+                const int n = std::max(1, int(len / 0.5));
+                for (int k = 0; k < n; ++k) {
+                    const double t = (k + 0.5) / n;
+                    const XY q { path[i-1].x + t * (path[i].x - path[i-1].x), path[i-1].y + t * (path[i].y - path[i-1].y) };
+                    bool in = false;
+                    for (const Strip& st : done) if (segDist(q, toM(st.a), toM(st.b)) <= st.widthM / 2.0 - 1.0) { in = true; break; }
+                    overLen += in ? len / n : 0;
+                }
+                sprayLen += len;
+            }
+            std::printf("  re-sprayed %.1f m of %.1f m\n", overLen, sprayLen);
+            CHECK(overLen < 0.05 * sprayLen, "resume turned re-sprays %.1f of %.1f m", overLen, sprayLen);
+        }
+
+        // Stopped halfway along a pass: the rest of that pass is still planned.
+        {
+            size_t leg = half;
+            while (leg < full.legSpray.size() && !full.legSpray[leg]) leg++;
+            std::vector<Strip> partial = flown(full, leg, base.swathWidthM);
+            const XY a = toM(full.flightPath[leg]), b = toM(full.flightPath[leg + 1]);
+            const XY mid { (a.x + b.x) / 2, (a.y + b.y) / 2 };
+            const LatLon midLL = fromMetres({ mid })[0];
+            partial.push_back({ full.flightPath[leg], midLL, base.swathWidthM });
+            Settings t = base;
+            t.sprayed = partial;
+            t.hasResumeFrom = true;
+            t.resumeFrom = midLL;
+            const Result r = generate(field, t);
+            CHECK(r.valid, "partial resume invalid");
+            if (r.valid) {
+                const double cov = combined(r, partial, base.swathWidthM);
+                std::printf("  stopped mid-pass: combined coverage %.4f\n", cov);
+                CHECK(cov > 0.985, "partial coverage %.4f", cov);
+                // First spray leg continues the interrupted pass from about the stop point.
+                for (size_t i = 1; i < r.flightPath.size(); ++i) {
+                    if (!r.legSpray[i - 1]) continue;
+                    const XY p0 = toM(r.flightPath[i - 1]), p1 = toM(r.flightPath[i]);
+                    const bool fromMid = std::hypot(p0.x - mid.x, p0.y - mid.y) < 1.5 || std::hypot(p1.x - mid.x, p1.y - mid.y) < 1.5;
+                    CHECK(fromMid, "first pass should pick up at the stop point");
+                    break;
+                }
+            }
+        }
+
+        // Everything sprayed: nothing to plan.
+        {
+            Settings t = base;
+            t.sprayed = flown(full, full.legSpray.size(), base.swathWidthM);
+            t.hasResumeFrom = true;
+            t.resumeFrom = full.flightPath.back();
+            const Result r = generate(field, t);
+            CHECK(!r.valid && r.allSprayed, "all sprayed: valid=%d allSprayed=%d", r.valid, r.allSprayed);
+        }
+
+        // With a headland: passes done and part of the ring: only the rest of the ring.
+        {
+            Settings h = base;
+            h.headlandPass = true;
+            const Result fullH = generate(field, h);
+            CHECK(fullH.valid, "headland plan invalid");
+            size_t ringStart = 0;
+            int passesSeen = 0;
+            for (size_t i = 0; i < fullH.legSpray.size(); ++i) {
+                if (fullH.legSpray[i] && ++passesSeen == fullH.passCount) { ringStart = i + 1; break; }
+            }
+            const size_t ringLegs = fullH.legSpray.size() - ringStart;
+            const size_t upTo = ringStart + ringLegs / 2;
+            const std::vector<Strip> doneH = flown(fullH, upTo, h.swathWidthM);
+            Settings t = h;
+            t.sprayed = doneH;
+            t.hasResumeFrom = true;
+            t.resumeFrom = fullH.flightPath[upTo];
+            const Result r = generate(field, t);
+            CHECK(r.valid, "headland resume invalid");
+            if (r.valid) {
+                const double cov = combined(r, doneH, h.swathWidthM);
+                std::printf("  headland half done: %d passes left, %.1f m to spray, combined coverage %.4f\n", r.passCount, r.sprayDistanceM, cov);
+                CHECK(r.passCount == 0, "headland resume: %d passes left, expected 0", r.passCount);
+                CHECK(cov > 0.985, "headland resume coverage %.4f", cov);
+            }
+        }
+    }
+
     std::printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "ALL PASSED", failures, failures == 1 ? "" : "s");
     return failures ? 1 : 0;
 }

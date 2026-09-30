@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <optional>
 
 namespace spray {
 
@@ -338,6 +339,209 @@ private:
     bool                             _graphBuilt = false;
 };
 
+// ---- resuming a job: what's already sprayed ----------------------------------
+//
+// The spray area on a fine grid, each cell outside, still to spray, or already
+// sprayed (inside the rectangle, a swath wide, of a leg sprayed earlier). Lookups are O(1), so
+// the new passes can be checked densely without polygon clipping.
+
+class CoverageGrid
+{
+public:
+    enum State : std::uint8_t { Outside = 0, Open = 1, Done = 2 };
+
+    CoverageGrid(const std::vector<XY>& area, const std::vector<XY>& stripA,
+                 const std::vector<XY>& stripB, const std::vector<double>& widths)
+    {
+        _minX = _minY = std::numeric_limits<double>::max();
+        double maxX = std::numeric_limits<double>::lowest();
+        double maxY = std::numeric_limits<double>::lowest();
+        for (const XY& p : area) {
+            _minX = std::min(_minX, p.x);
+            _minY = std::min(_minY, p.y);
+            maxX  = std::max(maxX, p.x);
+            maxY  = std::max(maxY, p.y);
+        }
+        const double w = maxX - _minX;
+        const double h = maxY - _minY;
+        _res = std::max(0.25, std::sqrt(std::max(w * h, 1.0) / 4.0e6));   // at most ~4 million cells
+        _nx  = static_cast<int>(std::ceil(w / _res)) + 1;
+        _ny  = static_cast<int>(std::ceil(h / _res)) + 1;
+        _cells.assign(static_cast<size_t>(_nx) * static_cast<size_t>(_ny), Outside);
+
+        // The area, row by row (even-odd crossings of the row's centre line).
+        const size_t n = area.size();
+        std::vector<double> xs;
+        for (int j = 0; j < _ny; ++j) {
+            const double y = _minY + (j + 0.5) * _res;
+            xs.clear();
+            for (size_t i = 0; i < n; ++i) {
+                const XY& a = area[i];
+                const XY& b = area[(i + 1) % n];
+                if ((a.y <= y && b.y > y) || (b.y <= y && a.y > y)) {
+                    xs.push_back(a.x + (y - a.y) / (b.y - a.y) * (b.x - a.x));
+                }
+            }
+            std::sort(xs.begin(), xs.end());
+            for (size_t k = 0; k + 1 < xs.size(); k += 2) {
+                const int i0 = std::max(0, static_cast<int>(std::ceil((xs[k] - _minX) / _res - 0.5)));
+                const int i1 = std::min(_nx - 1, static_cast<int>(std::floor((xs[k + 1] - _minX) / _res - 0.5)));
+                for (int i = i0; i <= i1; ++i) {
+                    _cells[_index(i, j)] = Open;
+                }
+            }
+        }
+
+        // The strips already sprayed.
+        for (size_t k = 0; k < stripA.size(); ++k) {
+            const XY&    a    = stripA[k];
+            const XY&    b    = stripB[k];
+            const double half = widths[k] / 2.0;
+            if (half <= 0.0) {
+                continue;
+            }
+            const double dx   = b.x - a.x;
+            const double dy   = b.y - a.y;
+            const double len  = std::hypot(dx, dy);
+            if (len < kEps) {
+                continue;
+            }
+            // The strip's rectangle, filled row by row (only the cells it touches).
+            const XY nrm { -dy / len * half, dx / len * half };
+            const XY corners[4] = { { a.x + nrm.x, a.y + nrm.y }, { b.x + nrm.x, b.y + nrm.y },
+                                    { b.x - nrm.x, b.y - nrm.y }, { a.x - nrm.x, a.y - nrm.y } };
+            double loY = corners[0].y;
+            double hiY = corners[0].y;
+            for (const XY& c : corners) {
+                loY = std::min(loY, c.y);
+                hiY = std::max(hiY, c.y);
+            }
+            const int j0 = std::max(0,       static_cast<int>(std::floor((loY - _minY) / _res)));
+            const int j1 = std::min(_ny - 1, static_cast<int>(std::ceil ((hiY - _minY) / _res)));
+            for (int j = j0; j <= j1; ++j) {
+                const double y = _minY + (j + 0.5) * _res;
+                double lo = std::numeric_limits<double>::max();
+                double hi = std::numeric_limits<double>::lowest();
+                for (int e = 0; e < 4; ++e) {
+                    const XY& p = corners[e];
+                    const XY& q = corners[(e + 1) % 4];
+                    if ((p.y <= y && q.y >= y) || (q.y <= y && p.y >= y)) {
+                        const double x = std::fabs(q.y - p.y) < kEps ? std::min(p.x, q.x) : p.x + (y - p.y) / (q.y - p.y) * (q.x - p.x);
+                        const double x2 = std::fabs(q.y - p.y) < kEps ? std::max(p.x, q.x) : x;
+                        lo = std::min(lo, x);
+                        hi = std::max(hi, x2);
+                    }
+                }
+                if (lo > hi) {
+                    continue;
+                }
+                const int i0 = std::max(0,       static_cast<int>(std::ceil ((lo - _minX) / _res - 0.5)));
+                const int i1 = std::min(_nx - 1, static_cast<int>(std::floor((hi - _minX) / _res - 0.5)));
+                for (int i = i0; i <= i1; ++i) {
+                    std::uint8_t& cell = _cells[_index(i, j)];
+                    if (cell == Open) {
+                        cell = Done;
+                    }
+                }
+            }
+        }
+    }
+
+    State at(const XY& p) const
+    {
+        const int i = static_cast<int>(std::floor((p.x - _minX) / _res));
+        const int j = static_cast<int>(std::floor((p.y - _minY) / _res));
+        if (i < 0 || j < 0 || i >= _nx || j >= _ny) {
+            return Outside;
+        }
+        return static_cast<State>(_cells[_index(i, j)]);
+    }
+
+    double resolution() const { return _res; }
+
+    double doneM2() const
+    {
+        return static_cast<double>(std::count(_cells.begin(), _cells.end(), static_cast<std::uint8_t>(Done))) * _res * _res;
+    }
+
+    /// Does a swath centred on p (across = unit vector across the flight
+    /// direction) still have ground to spray? True when at least a quarter of
+    /// the swath (of the part inside the spray area) hasn't been sprayed: the
+    /// same allowance the generator uses for strips left along the edges.
+    bool needsSpray(const XY& p, const XY& across, double swath) const
+    {
+        constexpr int kSamples = 9;
+        int inside = 0;
+        int open   = 0;
+        for (int k = 0; k < kSamples; ++k) {
+            const double o = swath * ((k + 0.5) / kSamples - 0.5);
+            const State  st = at({ p.x + across.x * o, p.y + across.y * o });
+            if (st != Outside) {
+                inside++;
+                if (st == Open) {
+                    open++;
+                }
+            }
+        }
+        if (inside == 0) {
+            return at(p) == Open;
+        }
+        return open >= 0.25 * inside;
+    }
+
+private:
+    size_t _index(int i, int j) const { return static_cast<size_t>(j) * static_cast<size_t>(_nx) + static_cast<size_t>(i); }
+
+    double                    _minX = 0.0;
+    double                    _minY = 0.0;
+    double                    _res  = 1.0;
+    int                       _nx   = 0;
+    int                       _ny   = 0;
+    std::vector<std::uint8_t> _cells;
+};
+
+// Douglas-Peucker for an open polyline (keeps both ends).
+std::vector<XY> simplifyLine(const std::vector<XY>& pts, double tolerance)
+{
+    if (pts.size() < 3) {
+        return pts;
+    }
+    std::vector<bool> keep(pts.size(), false);
+    keep.front() = keep.back() = true;
+    std::vector<std::pair<size_t, size_t>> stack { { 0, pts.size() - 1 } };
+    while (!stack.empty()) {
+        const auto [first, last] = stack.back();
+        stack.pop_back();
+        const XY& a = pts[first];
+        const XY& b = pts[last];
+        const double dx = b.x - a.x;
+        const double dy = b.y - a.y;
+        const double len = std::hypot(dx, dy);
+        double worst = -1.0;
+        size_t worstAt = first;
+        for (size_t i = first + 1; i < last; ++i) {
+            const double d = len > kEps ? std::fabs((pts[i].x - a.x) * dy - (pts[i].y - a.y) * dx) / len
+                                        : dist(pts[i], a);
+            if (d > worst) {
+                worst   = d;
+                worstAt = i;
+            }
+        }
+        if (worst > tolerance) {
+            keep[worstAt] = true;
+            stack.push_back({ first, worstAt });
+            stack.push_back({ worstAt, last });
+        }
+    }
+    std::vector<XY> out;
+    for (size_t i = 0; i < pts.size(); ++i) {
+        if (keep[i]) {
+            out.push_back(pts[i]);
+        }
+    }
+    return out;
+}
+
 } // namespace
 
 // ---- public helpers --------------------------------------------------------
@@ -478,6 +682,22 @@ Result generate(const std::vector<LatLon>& boundary, const Settings& s)
 
     InsideRouter router(toCCW(area));
 
+    // Resuming a job: which parts of the spray area are already sprayed.
+    std::optional<CoverageGrid> coverage;
+    if (!s.sprayed.empty()) {
+        std::vector<XY>     stripA;
+        std::vector<XY>     stripB;
+        std::vector<double> widths;
+        for (const Strip& strip : s.sprayed) {
+            stripA.push_back(proj.toXY(strip.a));
+            stripB.push_back(proj.toXY(strip.b));
+            widths.push_back(strip.widthM);
+        }
+        coverage.emplace(area, stripA, stripB, widths);
+        result.sprayedDoneM2 = coverage->doneM2();
+    }
+    bool somethingToSpray = false;   // before leaving out what's already sprayed
+
     // 2. Optional headland track, half a swath inside the spray area.
     std::vector<XY> headlandTrack;
     if (s.headlandPass) {
@@ -505,6 +725,11 @@ Result generate(const std::vector<LatLon>& boundary, const Settings& s)
         path.push_back(p);
         legs.push_back(sprayLegToHere);
     };
+
+    // Resuming in the air: start where the drone is waiting.
+    if (s.hasResumeFrom) {
+        addPoint(proj.toXY(s.resumeFrom), false);
+    }
 
     if (passRegion.size() >= 3) {
         double vMin = std::numeric_limits<double>::max();
@@ -572,6 +797,54 @@ Result generate(const std::vector<LatLon>& boundary, const Settings& s)
                 if (hits[k + 1] - hits[k] > 0.5) {
                     stretches[li].push_back({ hits[k], hits[k + 1] });
                 }
+            }
+            somethingToSpray = somethingToSpray || !stretches[li].empty();
+        }
+
+        // Resuming: keep only the parts of each stretch where the swath still
+        // has ground to spray. Short sprayed gaps inside a stretch are flown
+        // through (sprayed again) rather than split; tiny leftovers are dropped.
+        if (coverage) {
+            const double ds       = std::max(0.5, coverage->resolution());
+            const double mergeGap = 3.0;
+            const double minRun   = 2.0;
+            for (size_t li = 0; li < lines.size(); ++li) {
+                std::vector<Stretch> kept;
+                for (const Stretch& st : stretches[li]) {
+                    const int    samples = std::max(1, static_cast<int>(std::ceil((st.hi - st.lo) / ds)));
+                    const double step    = (st.hi - st.lo) / samples;
+                    std::vector<Stretch> runs;
+                    bool   inRun = false;
+                    double runLo = 0.0;
+                    for (int k = 0; k < samples; ++k) {
+                        const double pu   = st.lo + (k + 0.5) * step;
+                        const bool   need = coverage->needsSpray(fromUV(pu, lines[li]), across, swath);
+                        if (need && !inRun) {
+                            inRun = true;
+                            runLo = st.lo + k * step;
+                        } else if (!need && inRun) {
+                            inRun = false;
+                            runs.push_back({ runLo, st.lo + k * step });
+                        }
+                    }
+                    if (inRun) {
+                        runs.push_back({ runLo, st.hi });
+                    }
+                    std::vector<Stretch> merged;
+                    for (const Stretch& r : runs) {
+                        if (!merged.empty() && r.lo - merged.back().hi < mergeGap) {
+                            merged.back().hi = r.hi;
+                        } else {
+                            merged.push_back(r);
+                        }
+                    }
+                    for (const Stretch& r : merged) {
+                        if (r.hi - r.lo >= minRun) {
+                            kept.push_back(r);
+                        }
+                    }
+                }
+                stretches[li] = kept;
             }
         }
 
@@ -717,19 +990,121 @@ Result generate(const std::vector<LatLon>& boundary, const Settings& s)
         for (size_t k = 0; k <= headlandTrack.size(); ++k) {
             headlandRing.push_back(headlandTrack[(startIdx + k) % headlandTrack.size()]);
         }
-        if (path.empty()) {
-            addPoint(headlandRing.front(), false);
-        } else {
-            for (const XY& p : router.route(path.back(), headlandRing.front())) {
-                addPoint(p, false);   // transit to the ring
+        somethingToSpray = true;
+
+        // Resuming: only the parts of the ring that still need spraying
+        // (arcs); all of it is flown as a ring as before.
+        std::vector<std::vector<XY>> arcs;
+        bool wholeRing = true;
+        if (coverage) {
+            const double ds = std::max(0.5, coverage->resolution());
+            std::vector<XY>   samples;
+            std::vector<bool> need;
+            for (size_t k = 0; k + 1 < headlandRing.size(); ++k) {
+                const XY&    a   = headlandRing[k];
+                const XY&    b   = headlandRing[k + 1];
+                const double len = dist(a, b);
+                if (len < kEps) {
+                    continue;
+                }
+                const XY  dir    { (b.x - a.x) / len, (b.y - a.y) / len };
+                const XY  across { dir.y, -dir.x };
+                const int steps  = std::max(1, static_cast<int>(std::ceil(len / ds)));
+                for (int i = 0; i < steps; ++i) {
+                    const double t = static_cast<double>(i) / steps;
+                    const XY     p { a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t };
+                    samples.push_back(p);
+                    need.push_back(coverage->needsSpray(p, across, s.swathWidthM));
+                }
+            }
+            const size_t m = samples.size();
+            const size_t openCount = static_cast<size_t>(std::count(need.begin(), need.end(), true));
+            if (openCount < m) {
+                wholeRing = false;
+                if (openCount > 0) {
+                    // Walk the ring once from a sample that's already sprayed.
+                    size_t first = 0;
+                    while (need[first]) {
+                        first++;
+                    }
+                    std::vector<XY> arc;
+                    for (size_t n = 1; n <= m; ++n) {
+                        const size_t i = (first + n) % m;
+                        if (need[i]) {
+                            arc.push_back(samples[i]);
+                        }
+                        if ((!need[i] || n == m) && !arc.empty()) {
+                            if (!need[i]) {
+                                arc.push_back(samples[i]);   // up to where it's sprayed
+                            }
+                            double length = 0.0;
+                            for (size_t q = 1; q < arc.size(); ++q) {
+                                length += dist(arc[q - 1], arc[q]);
+                            }
+                            if (length >= 2.0) {
+                                arcs.push_back(simplifyLine(arc, 0.2));
+                            }
+                            arc.clear();
+                        }
+                    }
+                }
             }
         }
-        for (size_t k = 1; k < headlandRing.size(); ++k) {
-            addPoint(headlandRing[k], true);   // spray around it
+
+        if (wholeRing) {
+            if (path.empty()) {
+                addPoint(headlandRing.front(), false);
+            } else {
+                for (const XY& p : router.route(path.back(), headlandRing.front())) {
+                    addPoint(p, false);   // transit to the ring
+                }
+            }
+            for (size_t k = 1; k < headlandRing.size(); ++k) {
+                addPoint(headlandRing[k], true);   // spray around it
+            }
+        } else {
+            // Fly the arcs nearest-first, each from whichever end is closer.
+            std::vector<bool> arcDone(arcs.size(), false);
+            for (size_t done = 0; done < arcs.size(); ++done) {
+                size_t best    = 0;
+                bool   bestRev = false;
+                double bestD   = std::numeric_limits<double>::max();
+                for (size_t a = 0; a < arcs.size(); ++a) {
+                    if (arcDone[a]) {
+                        continue;
+                    }
+                    for (bool rev : { false, true }) {
+                        const XY&    end = rev ? arcs[a].back() : arcs[a].front();
+                        const double d   = path.empty() ? static_cast<double>(a) : dist(path.back(), end);
+                        if (d < bestD) {
+                            bestD   = d;
+                            best    = a;
+                            bestRev = rev;
+                        }
+                    }
+                }
+                arcDone[best] = true;
+                std::vector<XY> arc = arcs[best];
+                if (bestRev) {
+                    std::reverse(arc.begin(), arc.end());
+                }
+                if (path.empty()) {
+                    addPoint(arc.front(), false);
+                } else {
+                    for (const XY& p : router.route(path.back(), arc.front())) {
+                        addPoint(p, false);
+                    }
+                }
+                for (size_t k = 1; k < arc.size(); ++k) {
+                    addPoint(arc[k], true);
+                }
+            }
         }
     }
 
-    if (path.size() < 2) {
+    const bool anySpray = std::find(legs.begin() + (legs.empty() ? 0 : 1), legs.end(), true) != legs.end();
+    if (path.size() < 2 || !anySpray) {
+        result.allSprayed = coverage.has_value() && somethingToSpray;
         return result;
     }
 

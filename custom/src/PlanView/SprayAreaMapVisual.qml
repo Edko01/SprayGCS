@@ -68,6 +68,7 @@ Item {
     readonly property color _transitColor:  "#00b3ff"   // flying to and from the field
     readonly property color _startColor:    "#34c759"
     readonly property color _endColor:      "#b91c1c"
+    readonly property color _sprayedColor:  "#9ca3af"   // resuming: ground already sprayed (grey)
     readonly property real  _handleSize:    ScreenTools.defaultFontPixelHeight * 1.1
     readonly property real  _labelMinZoom:  17          // show section lengths from this zoom level in
     readonly property real  _labelMinLenM:  15          // ...on sections at least this long
@@ -393,6 +394,40 @@ Item {
             path:         _missionItem.sprayAreaPath
             visible:      _missionItem.pathValid && !_root._shapingBoundary
             z:            QGroundControl.zOrderMapItems - 2
+        }
+    }
+
+    // ----- resuming: ground already sprayed, shaded ----------------------------
+    Component {
+        id: sprayedStripComponent
+
+        MapPolygon {
+            property var corners
+
+            color:        _sprayedColor
+            opacity:      0.45 * _root.opacity
+            border.width: 0
+            path:         corners ? corners : []
+            visible:      !_root._shapingBoundary
+            z:            QGroundControl.zOrderMapItems - 1.8
+        }
+    }
+
+    Repeater {
+        model: _missionItem.sprayedStrips
+
+        delegate: Item {
+            property var _strip
+
+            Component.onCompleted: {
+                _strip = sprayedStripComponent.createObject(map, { "corners": modelData })
+                map.addMapItem(_strip)
+            }
+            Component.onDestruction: {
+                if (_strip) {
+                    _strip.destroy()
+                }
+            }
         }
     }
 

@@ -117,7 +117,7 @@ Rectangle {
 
             Repeater {
                 model: _sprayArea ? [
-                    { value: _sprayArea.sprayedAcresEst.toFixed(1),  caption: qsTr("acres sprayed") },
+                    { value: _sprayArea.sprayedAcresEst.toFixed(1),  caption: _sprayArea.hasSprayed ? qsTr("acres left") : qsTr("acres sprayed") },
                     { value: _sprayArea.estimatedVolume.toFixed(1),  caption: qsTr("gal product") },
                     { value: _sprayArea.estimatedMinutes.toFixed(0), caption: qsTr("min flight") },
                     { value: _sprayArea.passCount + (_sprayArea.headlandPass.rawValue ? "+1" : ""), caption: qsTr("passes") }
@@ -147,6 +147,14 @@ Rectangle {
                     }
                 }
             }
+        }
+
+        // Resuming a job: what's already done (the tiles show what's left).
+        QGCLabel {
+            Layout.fillWidth:    true
+            horizontalAlignment: Text.AlignHCenter
+            text:                _sprayArea ? qsTr("Already sprayed: %1 ac").arg(_sprayArea.sprayedDoneAcres.toFixed(1)) : ""
+            visible:             _sprayArea !== null && _sprayArea.hasSprayed
         }
     }
 }

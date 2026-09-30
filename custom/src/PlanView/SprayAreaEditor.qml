@@ -100,7 +100,16 @@ Rectangle {
             font.pointSize:      ScreenTools.mediumFontPointSize
             color:               qgcPal.warningText
             text:                qsTr("Field too small for these settings. Reduce the buffer or swath width.")
-            visible:             missionItem.fieldPolygon.isValid && !missionItem.pathValid
+            visible:             missionItem.fieldPolygon.isValid && !missionItem.pathValid && !missionItem.allSprayed
+        }
+
+        QGCLabel {
+            Layout.fillWidth:    true
+            wrapMode:            Text.WordWrap
+            horizontalAlignment: Text.AlignHCenter
+            font.pointSize:      ScreenTools.mediumFontPointSize
+            text:                qsTr("Everything in this field has been sprayed.")
+            visible:             missionItem.allSprayed
         }
 
         // ---- edit boundary ------------------------------------------------------
@@ -135,6 +144,86 @@ Rectangle {
             wrapMode:         Text.WordWrap
             text:             qsTr("Drag a corner to move it; drag a + between corners to add one. Basic, Circular, Trace and Load KML above the map start the boundary again.")
             visible:          missionItem.boundaryEditMode && missionItem.fieldPolygon.isValid
+        }
+
+        // ---- resume a job -------------------------------------------------------
+        // Paused mid-job (or landed to refill): mark what the drone has sprayed,
+        // and the passes are laid out again over only what's left, with any new
+        // settings. Needs the drone connected; the rest is shaded on the map.
+        ColumnLayout {
+            id:               resumeSection
+            Layout.fillWidth: true
+            spacing:          _margin / 2
+            visible:          !missionItem.boundaryEditMode && missionItem.fieldPolygon.isValid
+                              && (QGroundControl.multiVehicleManager.activeVehicle !== null || missionItem.hasSprayed)
+
+            property string _message: ""
+
+            Rectangle {
+                Layout.fillWidth: true
+                implicitHeight:   _rowHeight
+                radius:           _radius
+                color:            qgcPal.windowShade
+                visible:          QGroundControl.multiVehicleManager.activeVehicle !== null
+
+                QGCLabel {
+                    anchors.centerIn: parent
+                    text:             qsTr("Mark Sprayed So Far")
+                    font.pointSize:   ScreenTools.mediumFontPointSize
+                    font.bold:        true
+                }
+                QGCMouseArea {
+                    anchors.fill: parent
+                    onClicked:    resumeSection._message = missionItem.markSprayedFromDrone()
+                }
+            }
+
+            QGCLabel {
+                Layout.fillWidth: true
+                wrapMode:         Text.WordWrap
+                color:            qgcPal.warningText
+                text:             resumeSection._message
+                visible:          resumeSection._message !== ""
+            }
+
+            QGCLabel {
+                Layout.fillWidth: true
+                wrapMode:         Text.WordWrap
+                text:             qsTr("Mid-job, pause the drone (Hold) or land it, then tap this: the route is planned again over only what's left, and you can change the swath, angle and other settings for the rest.")
+                visible:          !missionItem.hasSprayed && resumeSection._message === ""
+            }
+
+            QGCLabel {
+                Layout.fillWidth: true
+                wrapMode:         Text.WordWrap
+                text:             (missionItem.resumeInAir
+                                   ? qsTr("Already sprayed: %1 ac (shaded). The route covers only what's left and starts where the drone is waiting. Upload, then switch the drone to Mission.")
+                                   : qsTr("Already sprayed: %1 ac (shaded). The route covers only what's left, starting near where the drone stopped."))
+                                  .arg(missionItem.sprayedDoneAcres.toFixed(1))
+                visible:          missionItem.hasSprayed
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                implicitHeight:   _rowHeight
+                radius:           _radius
+                color:            qgcPal.windowShade
+                visible:          missionItem.hasSprayed
+
+                QGCLabel {
+                    anchors.centerIn: parent
+                    text:             qsTr("Spray Whole Field Again")
+                    font.pointSize:   ScreenTools.mediumFontPointSize
+                    font.bold:        true
+                }
+                QGCMouseArea {
+                    anchors.fill: parent
+                    onClicked: {
+                        resumeSection._message = ""
+                        missionItem.clearSprayed()
+                    }
+                }
+            }
         }
 
         // ---- edit route ---------------------------------------------------------

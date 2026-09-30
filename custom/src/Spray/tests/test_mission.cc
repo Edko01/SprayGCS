@@ -284,6 +284,32 @@ int main()
         commonChecks(in, buildMission(in), true);
     }
 
+    std::printf("resuming in the air: the route's first waypoint is where the drone waits\n");
+    {
+        Settings rs;
+        for (size_t i = 1; i < g.flightPath.size() / 2; ++i) {
+            if (g.legSpray[i - 1]) rs.sprayed.push_back({ g.flightPath[i - 1], g.flightPath[i], rs.swathWidthM });
+        }
+        rs.hasResumeFrom = true;
+        rs.resumeFrom = g.flightPath[g.flightPath.size() / 2];
+        Result rg = generate(rect, rs);
+        CHECK(rg.valid, "resume route invalid");
+        SprayRoute rr;
+        rr.reset(rg.flightPath, rg.legSpray);
+        for (TransitMode mode : { TransitMode::None, TransitMode::Gate, TransitMode::Route }) {
+            MissionInput in; in.boundary = rect; in.route = rr; in.transit = mode;
+            in.takeoff = at(50, -40); in.transitAltM = 12; in.sprayAltM = 3;
+            if (mode == TransitMode::Route) in.transitRoute = { at(50, -20), at(50, 5) };
+            auto steps = buildMission(in);
+            const PlanStep* first = nullptr;
+            for (const auto& st : steps) {
+                if (st.kind == PlanStep::Waypoint && !st.transit) { first = &st; break; }
+            }
+            CHECK(first && distanceM(first->pos, rs.resumeFrom) < 0.01 && first->altM == 3,
+                  "mode %d: first route waypoint should be the waiting drone at spray height", int(mode));
+        }
+    }
+
     std::printf("helpers\n");
     {
         CHECK(pointInPolygon(rect, at(50, 30)) && !pointInPolygon(rect, at(50, -1)) && pointInPolygon(rect, at(0, 30)), "pointInPolygon");

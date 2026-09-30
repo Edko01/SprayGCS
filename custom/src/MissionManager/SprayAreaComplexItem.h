@@ -9,6 +9,7 @@
 #include "SettingsFact.h"
 
 #include <QtCore/QList>
+#include <QtCore/QPointer>
 #include <QtCore/QTimer>
 #include <QtCore/QVariantList>
 
@@ -17,6 +18,7 @@
 #include "SprayRoute.h"
 
 class PlanMasterController;
+class Vehicle;
 
 /// \brief Spray Area: draw or import a field boundary and get spray passes.
 ///
@@ -105,6 +107,14 @@ public:
     Q_PROPERTY(bool         sideEditMode     READ sideEditMode     WRITE setSideEditMode NOTIFY sideEditModeChanged)
     Q_PROPERTY(bool         passAlignMode    READ passAlignMode    WRITE setPassAlignMode NOTIFY passAlignModeChanged)  ///< tap a side to run the passes along it
 
+    // Resuming a job: the ground already sprayed is left out of the passes, and
+    // (in the air) the route starts where the drone is waiting.
+    Q_PROPERTY(bool         hasSprayed       READ hasSprayed       NOTIFY sprayedChanged)
+    Q_PROPERTY(QVariantList sprayedStrips    READ sprayedStrips    NOTIFY sprayedChanged)   ///< [[4 corners], ...] for the map
+    Q_PROPERTY(bool         resumeInAir      READ resumeInAir      NOTIFY sprayedChanged)   ///< route starts at the waiting drone
+    Q_PROPERTY(double       sprayedDoneAcres READ sprayedDoneAcres NOTIFY pathUpdated)
+    Q_PROPERTY(bool         allSprayed       READ allSprayed       NOTIFY pathUpdated)      ///< nothing left to spray
+
     // Undo / redo of boundary, settings and route edits.
     Q_PROPERTY(bool         canUndo          READ canUndo          NOTIFY undoRedoChanged)
     Q_PROPERTY(bool         canRedo          READ canRedo          NOTIFY undoRedoChanged)
@@ -169,12 +179,24 @@ public:
     bool         passAlignMode()    const { return _passAlignMode; }
     void         setPassAlignMode(bool enable);
     QVariantList previewPath()      const { return _previewPathVariant; }
+    bool         hasSprayed()       const { return !_sprayed.empty(); }
+    QVariantList sprayedStrips()    const { return _sprayedStripsVariant; }
+    bool         resumeInAir()      const { return _hasResumeFrom; }
+    double       sprayedDoneAcres() const { return _result.sprayedDoneM2 / 4046.8564224; }
+    bool         allSprayed()       const { return _result.allSprayed; }
     bool         canUndo()          const { return _changePending || !_undoStack.isEmpty(); }
     bool         canRedo()          const { return !_changePending && !_redoStack.isEmpty(); }
 
     /// Show the passes as they'd be with these settings (raw units: metres, degrees).
     Q_INVOKABLE void previewPasses(double swathWidthM, double passAngleDeg, double edgeMarginM, double offsetM);
     Q_INVOKABLE void clearPreview();
+
+    /// Resuming a job: add what the drone has sprayed of the mission it's flying
+    /// (from its mission progress and position) and plan only the rest. Returns
+    /// an empty string, or why it couldn't (for the operator).
+    Q_INVOKABLE QString markSprayedFromDrone();
+    /// Back to spraying the whole field.
+    Q_INVOKABLE void    clearSprayed();
 
     Q_INVOKABLE void undo();
     Q_INVOKABLE void redo();
@@ -270,6 +292,7 @@ signals:
     void boundaryEditModeChanged();
     void fieldNameChanged();
     void undoRedoChanged();
+    void sprayedChanged();
 
 private slots:
     void _setDirty();
@@ -291,6 +314,9 @@ private:
         QList<int>                 gateSides;
         std::vector<spray::LatLon> transitRoute;
         bool                       transitRouteCustom = false;
+        std::vector<spray::Strip>  sprayed;
+        bool                       hasResumeFrom = false;
+        spray::LatLon              resumeFrom;
 
         bool operator==(const EditState &other) const;
         bool operator!=(const EditState &other) const { return !(*this == other); }
@@ -317,6 +343,9 @@ private:
     std::vector<spray::LatLon> _effectiveTransitRoute() const { return _transitRouteCustom ? _transitRoute : _defaultTransitRoute(); }
 
     void _makeTransitRouteCustom();
+    void _rebuildSprayedVariant();
+    void _trackVehicle(Vehicle *vehicle);   ///< remember where the drone left Mission mode
+    int  _resumeStartSeq() const;           ///< plan sequence number of the route's first waypoint
     void _emitRouteChanged(int oldLastSeq);
     void _rebuildRouteVariants();
 
@@ -367,6 +396,16 @@ private:
     QVariantList                  _startOptionsVariant;
     bool                          _hasStartNear   = false;  ///< pilot picked a start corner
     spray::LatLon                 _startNear;               ///< ...near here (kept through setting changes)
+    std::vector<spray::Strip>     _sprayed;                 ///< resuming: ground already sprayed
+    bool                          _hasResumeFrom  = false;  ///< resuming in the air...
+    spray::LatLon                 _resumeFrom;              ///< ...from where the drone is waiting
+    QVariantList                  _sprayedStripsVariant;
+    QPointer<Vehicle>             _trackedVehicle;          ///< the drone whose mission progress is followed
+    QList<QMetaObject::Connection> _trackConnections;
+    int                           _trackIndex     = -1;     ///< mission item it was flying to when it left Mission mode
+    QGeoCoordinate                _trackPos;                ///< ...and where it was
+    bool                          _trackInMission = false;
+    QMetaObject::Connection       _sendCompleteConnection;  ///< after an upload, continue from the drone
 
     // Undo / redo. Changes are grouped: a drag, typing, or a traced boundary
     // lands as one step once things have been still for _undoGroupMs.
@@ -406,6 +445,8 @@ private:
     static constexpr const char *_jsonTransitRouteKey    = "transitRoute";   ///< [[lat, lon], ...] after takeoff
     static constexpr const char *_jsonTransitCustomKey   = "transitRouteCustom";
     static constexpr const char *_jsonTakeoffKey         = "takeoff";        ///< [lat, lon] for the onboard app
+    static constexpr const char *_jsonSprayedKey         = "sprayed";        ///< [[latA, lonA, latB, lonB, widthM], ...] already sprayed
+    static constexpr const char *_jsonResumeFromKey      = "resumeFrom";     ///< [lat, lon]: route starts at the waiting drone
 
     static constexpr double      kMinBufferM             = 0.9144;           ///< 3 ft
     static constexpr double      kMaxBufferM             = 50.0;
