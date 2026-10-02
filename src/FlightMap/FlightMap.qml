@@ -149,7 +149,8 @@ Map {
         //     but are excluded by the Mouse-only default.
         // Accepting both Mouse and TouchPad on all platforms is harmless and covers every case.
         acceptedDevices:    PointerDevice.Mouse | PointerDevice.TouchPad
-        rotationScale:      1 / 120
+        // SprayGCS: half a zoom level per wheel notch (120); a whole level doubled the scale at each click.
+        rotationScale:      1 / 240
 
         onWheel: (event) => {
             const zoomDelta = event.angleDelta.y * rotationScale
