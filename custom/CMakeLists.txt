@@ -122,6 +122,18 @@ qt_add_resources(${CMAKE_PROJECT_NAME} custom_shared_resources
     FILES "${CUSTOM_SHARED_GEAR}"
 )
 
+# The spray HUD's typeface (Chakra Petch, SIL Open Font License: res/fonts/ChakraPetch-OFL.txt).
+set(CUSTOM_FONT_RESOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/res/fonts/ChakraPetch-Medium.ttf"
+    "${CMAKE_CURRENT_SOURCE_DIR}/res/fonts/ChakraPetch-SemiBold.ttf"
+    "${CMAKE_CURRENT_SOURCE_DIR}/res/fonts/ChakraPetch-Bold.ttf"
+)
+qgc_set_qt_resource_alias(${CUSTOM_FONT_RESOURCES})
+qt_add_resources(${CMAKE_PROJECT_NAME} custom_fonts
+    PREFIX "/Custom/fonts"
+    FILES ${CUSTOM_FONT_RESOURCES}
+)
+
 set(CUSTOM_JSON_RESOURCE
     "${CMAKE_CURRENT_SOURCE_DIR}/res/json/PerimeterScan.SettingsGroup.json"
     "${CMAKE_CURRENT_SOURCE_DIR}/res/json/SprayArea.SettingsGroup.json"

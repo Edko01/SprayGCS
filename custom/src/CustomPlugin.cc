@@ -25,6 +25,7 @@
 #include <QtCore/QApplicationStatic>
 #include <QtCore/QFile>
 #include <QtGui/QClipboard>
+#include <QtGui/QFontDatabase>
 #include <QtGui/QGuiApplication>
 #include <QtQml/QQmlApplicationEngine>
 #include <QtQml/QQmlFile>
@@ -329,6 +330,15 @@ QQmlApplicationEngine* CustomPlugin::createQmlApplicationEngine(QObject* parent)
 
     // The drone's Return (RTL_TYPE, RTL_RETURN_ALT) is set to suit each plan
     // when it's uploaded: see SprayAreaComplexItem::_applyReturnSettings.
+
+    // The spray HUD's typeface; the HUD falls back to the standard font without it.
+    static constexpr const char *hudFontWeights[] = { "Medium", "SemiBold", "Bold" };
+    for (const char *fontWeight : hudFontWeights) {
+        const QString fontFile = QStringLiteral(":/Custom/fonts/ChakraPetch-%1.ttf").arg(QLatin1StringView(fontWeight));
+        if (QFontDatabase::addApplicationFont(fontFile) < 0) {
+            qCWarning(CustomLog) << "Could not load font" << fontFile;
+        }
+    }
 
     _qmlEngine = QGCCorePlugin::createQmlApplicationEngine(parent);
     _qmlEngine->addImportPath("qrc:/qml/Custom/Widgets");

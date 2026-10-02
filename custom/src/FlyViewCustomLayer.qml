@@ -188,6 +188,7 @@ Item {
                         anchors.centerIn: parent
                         text:             modelData.text
                         color:            modelData.color
+                        font.family:      "Chakra Petch"
                         font.bold:        true
                         font.pointSize:   ScreenTools.smallFontPointSize
                     }
@@ -211,8 +212,8 @@ Item {
                 id:               batteryText
                 anchors.centerIn: parent
                 color:            batteryBar._levelColor
+                font.family:      "Chakra Petch"
                 font.bold:        true
-                font.features:    ({ "tnum": 1 })
                 text: {
                     var bar = batteryBar._bar
                     if (!bar) {

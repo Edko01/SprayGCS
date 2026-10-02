@@ -61,6 +61,12 @@ Item {
 
     // ---- components -------------------------------------------------------------
 
+    // The HUD's typeface, registered by CustomPlugin.
+    component HudText: QGCLabel {
+        font.family: "Chakra Petch"
+        font.weight: Font.Medium
+    }
+
     // Glass panel with two cut corners and bright edges on the cuts.
     component Panel: Shape {
         id: panel
@@ -128,7 +134,7 @@ Item {
                 width:  parent.width
                 height: captionLabel.height
 
-                QGCLabel {
+                HudText {
                     id:             captionLabel
                     anchors.left:   readout.alignRight ? undefined : parent.left
                     anchors.right:  readout.alignRight ? parent.right : undefined
@@ -136,7 +142,7 @@ Item {
                     color:          readout.s.dim
                     font.pointSize: ScreenTools.smallFontPointSize
                 }
-                QGCLabel {
+                HudText {
                     anchors.left:   readout.alignRight ? parent.left : undefined
                     anchors.right:  readout.alignRight ? undefined : parent.right
                     text:           readout.planText
@@ -155,15 +161,24 @@ Item {
                     anchors.right: readout.alignRight ? parent.right : undefined
                     spacing:       readout.s.u * 0.5
 
-                    QGCLabel {
-                        id:             valueLabel
-                        text:           readout.value
-                        color:          readout._off ? readout.s.warn : readout.s.ink
-                        font.pointSize: ScreenTools.defaultFontPointSize * 3
-                        font.bold:      true
-                        font.features:  ({ "tnum": 1 })
+                    // The font's digits differ in width: size the number for its widest
+                    // digits so it doesn't shuffle the units as it changes.
+                    HudText {
+                        id:                     valueLabel
+                        width:                  Math.max(implicitWidth, widestValue.advanceWidth)
+                        horizontalAlignment:    Text.AlignRight
+                        text:                   readout.value
+                        color:                  readout._off ? readout.s.warn : readout.s.ink
+                        font.pointSize:         ScreenTools.defaultFontPointSize * 3
+                        font.weight:            Font.Bold
+
+                        TextMetrics {
+                            id:     widestValue
+                            font:   valueLabel.font
+                            text:   readout.value.replace(/[0-9]/g, "0")
+                        }
                     }
-                    QGCLabel {
+                    HudText {
                         anchors.baseline: valueLabel.baseline
                         text:             readout.units
                         color:            readout.s.dim
@@ -279,11 +294,11 @@ Item {
                 }
             }
 
-            QGCLabel {
+            HudText {
                 anchors.horizontalCenter:   parent.horizontalCenter
                 text:                       pump.spraying ? qsTr("Spraying") : qsTr("Pump off")
                 color:                      pump.spraying ? pump.s.spray : pump.s.dim
-                font.bold:                  true
+                font.weight:                Font.Bold
                 font.pointSize:             ScreenTools.mediumFontPointSize
             }
         }
@@ -319,7 +334,7 @@ Item {
             anchors.leftMargin: cell._inset
             spacing:            cell.s.h * 0.05
 
-            QGCLabel {
+            HudText {
                 width:          parent.width
                 text:           cell.caption
                 color:          cell.s.dim
@@ -350,17 +365,16 @@ Item {
                         PathLine { x: arrow.width / 2;   y: 0 }
                     }
                 }
-                QGCLabel {
+                HudText {
                     width:          parent.width - (arrow.visible ? arrow.width + parent.spacing : 0)
                     text:           cell.value
                     color:          cell.valueColor
-                    font.bold:      true
+                    font.weight:    Font.Bold
                     font.pointSize: ScreenTools.largeFontPointSize
-                    font.features:  ({ "tnum": 1 })
                     elide:          Text.ElideRight
                 }
             }
-            QGCLabel {
+            HudText {
                 width:          parent.width
                 text:           cell.detail
                 color:          cell.s.dim
@@ -424,25 +438,24 @@ Item {
                     height:                 phaseLabel.height * 0.7
                     color:                  statusStrip._info.color
                 }
-                QGCLabel {
+                HudText {
                     id:                 phaseLabel
                     anchors.left:       phaseTick.right
                     anchors.leftMargin: _s.u * 0.8
                     text:               statusStrip._info.text
                     color:              statusStrip._info.color
-                    font.bold:          true
+                    font.weight:        Font.Bold
                     font.pointSize:     ScreenTools.largeFontPointSize
                     font.letterSpacing: _s.u * 0.25
                 }
-                QGCLabel {
+                HudText {
                     anchors.right:      parent.right
                     anchors.baseline:   phaseLabel.baseline
                     visible:            statusStrip._passTotal > 0
                     text:               qsTr("Pass %1 of %2").arg(statusStrip._pass).arg(statusStrip._passTotal)
                     color:              _s.ink
-                    font.bold:          true
+                    font.weight:        Font.Bold
                     font.pointSize:     ScreenTools.mediumFontPointSize
-                    font.features:      ({ "tnum": 1 })
                 }
             }
 
@@ -491,26 +504,24 @@ Item {
                 Row {
                     spacing: _s.u * 0.6
 
-                    QGCLabel {
+                    HudText {
                         id:             percentLabel
                         text:           Math.round(100 * statusStrip._fraction) + "%"
                         color:          _s.ink
-                        font.bold:      true
+                        font.weight:    Font.Bold
                         font.pointSize: ScreenTools.mediumFontPointSize
-                        font.features:  ({ "tnum": 1 })
                     }
-                    QGCLabel {
+                    HudText {
                         anchors.baseline:   percentLabel.baseline
                         text:               qsTr("sprayed")
                         color:              _s.dim
                     }
                 }
-                QGCLabel {
+                HudText {
                     anchors.right:      parent.right
                     anchors.baseline:   percentLabel.baseline
                     text:               qsTr("%1 of %2 ac").arg(statusStrip._acDone.toFixed(1)).arg(statusStrip._acTotal.toFixed(1))
                     color:              _s.ink
-                    font.features:      ({ "tnum": 1 })
                 }
             }
         }
