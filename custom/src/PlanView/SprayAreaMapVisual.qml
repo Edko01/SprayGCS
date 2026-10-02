@@ -93,6 +93,10 @@ Item {
         return px > 0 ? 100 / px : 1e9
     }
     readonly property bool _labelsFit: _missionItem.swathWidth.rawValue / _metersPerPixel >= ScreenTools.defaultFontPixelHeight * 1.6
+    // Passes this close on screen draw thin and without the dark outline, so they
+    // don't merge into solid yellow and black stripes over the field.
+    readonly property real _passPixels:  _missionItem.swathWidth.rawValue / _metersPerPixel
+    readonly property bool _densePasses: _passPixels < ScreenTools.defaultFontPixelHeight
 
     /// True if the passes (at `passAngle`) run along this side, either way.
     function _passesAlongSide(side, passAngle) {
@@ -523,7 +527,7 @@ Item {
             line.width: segment && (segment.spray || segment.outside) ? 6 : 4
             opacity:    0.55 * (_currentItem ? 1.0 : 0.7) * _root.opacity * _root._routeDim
             path:       segment ? [ segment.start, segment.end ] : []
-            visible:    !_root._shapingBoundary
+            visible:    !_root._shapingBoundary && !_root._densePasses
             z:          QGroundControl.zOrderMapItems - 1
         }
     }
@@ -535,7 +539,8 @@ Item {
             property var segment
 
             line.color: _segmentColor(segment)
-            line.width: segment && (segment.spray || segment.outside) ? 3 : 1.5
+            line.width: !segment || !(segment.spray || segment.outside) ? 1.5
+                        : (_root._densePasses ? Math.max(1, Math.min(3, _root._passPixels * 0.25)) : 3)
             opacity:    (_currentItem ? 1.0 : 0.7) * _root.opacity * _root._routeDim
             path:       segment ? [ segment.start, segment.end ] : []
             visible:    !_root._shapingBoundary
