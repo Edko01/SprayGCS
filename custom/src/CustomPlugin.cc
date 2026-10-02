@@ -106,15 +106,6 @@ void CustomPlugin::adjustSettingMetaData(const QString& settingsGroup, FactMetaD
             userVisible = false;
             return;
         }
-#if !defined(Q_OS_ANDROID) && !defined(Q_OS_IOS)
-        else if (metaData.name() == AppSettings::uiScalePercentName) {
-            // SprayGCS: start larger on desktop so it's readable without
-            // changing settings. (Tablets scale by screen density already;
-            // we'll tune that default when we build for Android.)
-            metaData.setRawDefaultValue(QVariant(175u));
-            return;
-        }
-#endif
 #if defined(Q_OS_LINUX) && !defined(Q_OS_ANDROID)
         else if (metaData.name() == AppSettings::audioMutedName && runningUnderWsl()) {
             // SprayGCS: voice announcements start muted under WSL. The Windows
