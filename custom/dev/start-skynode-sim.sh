@@ -97,7 +97,8 @@ echo "==> [3/4] Opening the Virtual FMU page in Firefox"
 firefox "http://$GUEST_IP/apps/com.auterion.virtual-fmu/" >/dev/null 2>&1 &
 
 echo "==> [4/4] Starting SprayGCS"
-( cd "$HOME/qgroundcontrol" && QT_QPA_PLATFORM=xcb "$QGC_BIN" >/dev/null 2>&1 & )
+# Drawn on the processor: with the graphics chip, WSL drew SprayGCS text in the wrong colours on some PCs.
+( cd "$HOME/qgroundcontrol" && LIBGL_ALWAYS_SOFTWARE=1 QT_QPA_PLATFORM=xcb "$QGC_BIN" >/dev/null 2>&1 & )
 
 cat <<'EOF'
 

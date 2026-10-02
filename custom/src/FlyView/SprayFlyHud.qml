@@ -61,11 +61,8 @@ Item {
 
     // ---- components -------------------------------------------------------------
 
-    // The HUD's typeface, registered by CustomPlugin. Drawn as curves, like the
-    // panels: the glyph-cache text path showed this font in the wrong colours
-    // under WSL (white as yellow, grey as black).
+    // The HUD's typeface, registered by CustomPlugin.
     component HudText: QGCLabel {
-        renderType:  Text.CurveRendering
         font.family: "Chakra Petch"
         font.weight: Font.Medium
     }
