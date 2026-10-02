@@ -4,6 +4,7 @@
 #include "PerimeterScanPlanCreator.h"
 #include "SprayAreaComplexItem.h"
 #include "FlyView/SprayBatteryBar.h"
+#include "Map/SprayMapLayers.h"
 #include "SprayAreaPlanCreator.h"
 #include "MissionController.h"
 #include "PlanMasterController.h"
@@ -446,6 +447,14 @@ QObject *CustomPlugin::sprayBatteryBar() const
         _batteryBar = new SprayBatteryBar(const_cast<CustomPlugin *>(this));
     }
     return _batteryBar;
+}
+
+QObject *CustomPlugin::sprayMapLayers() const
+{
+    if (!_mapLayers) {
+        _mapLayers = new SprayMapLayers(const_cast<CustomPlugin *>(this));
+    }
+    return _mapLayers;
 }
 
 QObject *CustomPlugin::sprayPlanArea() const

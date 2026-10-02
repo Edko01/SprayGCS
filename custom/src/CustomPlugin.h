@@ -67,6 +67,8 @@ class CustomPlugin : public QGCCorePlugin
     Q_PROPERTY(QObject *sprayPlanArea READ sprayPlanArea NOTIFY sprayPlanAreaChanged)
     /// Battery level and failsafe levels for the Fly view's battery bar.
     Q_PROPERTY(QObject *sprayBatteryBar READ sprayBatteryBar CONSTANT)
+    /// Field images (GeoTIFF orthomosaics) on the Plan and Fly maps.
+    Q_PROPERTY(QObject *sprayMapLayers READ sprayMapLayers CONSTANT)
 
 public:
     explicit CustomPlugin(QObject *parent = nullptr);
@@ -85,6 +87,7 @@ public:
 
     QObject *sprayPlanArea() const;
     QObject *sprayBatteryBar() const;
+    QObject *sprayMapLayers() const;
     /// Called by a Plan view Spray Area when it's created.
     void sprayPlanAreaCreated(QObject *area);
 
@@ -125,6 +128,7 @@ private:
 
     CustomOptions *_options = nullptr;
     mutable class SprayBatteryBar *_batteryBar = nullptr;   ///< made when the Fly view first asks
+    mutable class SprayMapLayers *_mapLayers = nullptr;     ///< made when a map first asks
     QQmlApplicationEngine *_qmlEngine = nullptr;
     class CustomOverrideInterceptor *_urlInterceptor = nullptr;
 };

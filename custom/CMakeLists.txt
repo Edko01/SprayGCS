@@ -206,6 +206,7 @@ qgc_set_qt_resource_alias(
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PlanView/SprayMapTools.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PlanView/SprayJobPanel.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/src/PlanView/SprayFlyMapItems.qml
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/PlanView/SprayMapImageItems.qml
     ${CMAKE_CURRENT_SOURCE_DIR}/src/FlyView/SprayFlyHud.qml
 )
 
@@ -222,6 +223,7 @@ qt_add_qml_module(CustomPlanModule
         ${CMAKE_CURRENT_SOURCE_DIR}/src/PlanView/SprayMapTools.qml
         ${CMAKE_CURRENT_SOURCE_DIR}/src/PlanView/SprayJobPanel.qml
         ${CMAKE_CURRENT_SOURCE_DIR}/src/PlanView/SprayFlyMapItems.qml
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/PlanView/SprayMapImageItems.qml
         ${CMAKE_CURRENT_SOURCE_DIR}/src/FlyView/SprayFlyHud.qml
     NO_PLUGIN
 )
@@ -235,6 +237,8 @@ set(CUSTOM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/CustomPlugin.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/FlyView/SprayBatteryBar.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/FlyView/SprayBatteryBar.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Map/SprayMapLayers.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Map/SprayMapLayers.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/AutoPilotPlugin/CustomAutoPilotPlugin.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/AutoPilotPlugin/CustomAutoPilotPlugin.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/FirmwarePlugin/CustomFirmwarePlugin.cc
@@ -249,6 +253,8 @@ set(CUSTOM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/MissionManager/SprayAreaComplexItem.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/MissionManager/SprayAreaPlanCreator.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/MissionManager/SprayAreaPlanCreator.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Spray/GeoTiff.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Spray/GeoTiff.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Spray/SprayMission.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Spray/SprayMission.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Spray/SprayPathGenerator.cc

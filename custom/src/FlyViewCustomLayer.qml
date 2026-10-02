@@ -252,4 +252,12 @@ Item {
             return mapControl && typeof mapControl.addMapItem === "function" ? mapControl : null
         })
     }
+
+    // SprayGCS: field images (GeoTIFF orthomosaics) added under Layers in the Plan view.
+    Loader {
+        source: "qrc:/qml/Custom/Plan/SprayMapImageItems.qml"
+        onLoaded: item.map = Qt.binding(function() {
+            return mapControl && typeof mapControl.addMapItem === "function" ? mapControl : null
+        })
+    }
 }

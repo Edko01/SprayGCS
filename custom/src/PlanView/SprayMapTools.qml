@@ -9,7 +9,8 @@ import QGroundControl.Controls
 
 /// XAG-style map tools for the Plan map, as a bar in the top-left corner:
 ///   X / >   hide or show the tools
-///   Layers  map provider and type (satellite, hybrid, street...)
+///   Layers  map provider and type (satellite, hybrid, street...), and field
+///           images (GeoTIFF orthomosaics) shown under the plan
 ///   Arrow   centre the map on the drone
 ///   Target  centre the map on this tablet (the GCS); its position is drawn too
 ///   Ruler   tap points on the map to measure distance, and area from 3 points
@@ -34,6 +35,7 @@ Item {
     readonly property color _accent:       "#ffd400"
     readonly property color _measureColor: "#ff9f0a"
     readonly property var   _mapSettings:  QGroundControl.settingsManager.flightMapSettings
+    readonly property var   _mapLayers:    QGroundControl.corePlugin.sprayMapLayers !== undefined ? QGroundControl.corePlugin.sprayMapLayers : null
 
     width:  bar.width
     height: bar.height
@@ -183,7 +185,7 @@ Item {
 
                 ToolButton {
                     icon:        "/InstrumentValueIcons/layers.svg"
-                    label:       qsTr("Map type")
+                    label:       qsTr("Map and field images")
                     active:      _root.layersOpen
                     onActivated: {
                         _root.layersOpen = !_root.layersOpen
@@ -280,7 +282,93 @@ Item {
                     }
                 }
             }
+
+            // ---- field images ----
+            Rectangle {
+                Layout.fillWidth:       true
+                Layout.topMargin:       _margin / 2
+                implicitHeight:         1
+                color:                  qgcPal.text
+                opacity:                0.3
+            }
+            QGCLabel {
+                text:      qsTr("Field images")
+                font.bold: true
+            }
+            QGCLabel {
+                Layout.fillWidth: true
+                wrapMode:         Text.WordWrap
+                font.pointSize:   ScreenTools.smallFontPointSize
+                text:             qsTr("Orthomosaics (GeoTIFF) from your mapping software, shown under the plan here and in Fly.")
+                visible:          !_root._mapLayers || _root._mapLayers.layers.length === 0
+            }
+            // The model is the count, so moving a slider doesn't rebuild the rows.
+            Repeater {
+                model: _root._mapLayers ? _root._mapLayers.layers.length : 0
+
+                delegate: ColumnLayout {
+                    id: layerRow
+
+                    required property int index
+                    readonly property var _layer: index < _root._mapLayers.layers.length ? _root._mapLayers.layers[index] : null
+
+                    Layout.fillWidth: true
+                    spacing:          0
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing:          _margin / 2
+
+                        QGCCheckBox {
+                            checked:   !!layerRow._layer && layerRow._layer.visible
+                            onClicked: _root._mapLayers.setLayerVisible(layerRow.index, checked)
+                        }
+                        QGCLabel {
+                            Layout.fillWidth: true
+                            text:             layerRow._layer ? layerRow._layer.name : ""
+                            elide:            Text.ElideMiddle
+                        }
+                        QGCButton {
+                            text:      qsTr("Remove")
+                            onClicked: _root._mapLayers.removeLayer(layerRow.index)
+                        }
+                    }
+                    QGCSlider {
+                        Layout.fillWidth: true
+                        from:             0.1
+                        to:               1.0
+                        value:            layerRow._layer ? layerRow._layer.opacity : 1.0
+                        enabled:          !!layerRow._layer && layerRow._layer.visible
+                        onMoved:          _root._mapLayers.setLayerOpacity(layerRow.index, value)
+                    }
+                }
+            }
+            QGCButton {
+                Layout.fillWidth: true
+                text:             _root._mapLayers && _root._mapLayers.loading ? qsTr("Reading the image...") : qsTr("Add Field Image (GeoTIFF)")
+                enabled:          !!_root._mapLayers && !_root._mapLayers.loading
+                onClicked:        geoTiffDialog.openForLoad()
+            }
         }
+    }
+
+    QGCFileDialog {
+        id:          geoTiffDialog
+        title:       qsTr("Add a field image")
+        nameFilters: [ qsTr("GeoTIFF (*.tif *.tiff *.TIF *.TIFF)") ]
+        // The in-app picker only lists one folder (with Import on Android); on a
+        // desktop the system picker reaches the mapping software's exports anywhere.
+        folder:      ScreenTools.isMobile ? QGroundControl.settingsManager.appSettings.missionSavePath : ""
+        onAcceptedForLoad: (file) => {
+            _root._mapLayers.addGeoTiff(file)
+            close()
+        }
+    }
+
+    // Field images on this map, under the plan.
+    Loader {
+        source:   "qrc:/qml/Custom/Plan/SprayMapImageItems.qml"
+        onLoaded: item.map = Qt.binding(function() { return _root.map })
     }
 
     // ---- measuring: results panel -----------------------------------------------
