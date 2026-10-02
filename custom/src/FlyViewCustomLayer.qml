@@ -106,7 +106,12 @@ Item {
 
         readonly property var  _bar:        QGroundControl.corePlugin.sprayBatteryBar !== undefined ? QGroundControl.corePlugin.sprayBatteryBar : null
         readonly property real _edgeMargin: ScreenTools.defaultFontPixelWidth * 0.75   // the Fly view's widget margin
-        readonly property real _barHeight:  ScreenTools.defaultFontPixelHeight * 0.45
+        readonly property real _barHeight:  ScreenTools.defaultFontPixelHeight * 0.55
+        readonly property color _glass:     Qt.rgba(0.035, 0.08, 0.12, 0.86)   // the spray HUD's panels
+        readonly property color _okColor:   "#2ee59d"
+        readonly property color _warnColor: "#ffb224"
+        readonly property color _badColor:  "#ff5252"
+        readonly property color _levelColor: _level <= _landAt ? _badColor : (_level <= _returnAt ? _warnColor : _okColor)
         readonly property real _level:      _bar ? Math.max(0, Math.min(100, _bar.percent)) : 0
         readonly property real _returnAt:   _bar ? _bar.returnPercent : 0
         readonly property real _landAt:     _bar ? _bar.landPercent : 0
@@ -122,31 +127,41 @@ Item {
             id:     barTrack
             width:  parent.width
             height: batteryBar._barHeight
-            color:  Qt.rgba(0, 0, 0, 0.45)
+            color:  batteryBar._glass
         }
         Rectangle {   // red: below the emergency (Land) level
             height: barTrack.height
             width:  batteryBar._x(Math.min(batteryBar._level, batteryBar._landAt))
-            color:  "#ef4444"
+            color:  batteryBar._badColor
         }
         Rectangle {   // yellow: between emergency and critical (Return)
             x:      batteryBar._x(batteryBar._landAt)
             height: barTrack.height
             width:  batteryBar._x(Math.max(0, Math.min(batteryBar._level, batteryBar._returnAt) - batteryBar._landAt))
-            color:  "#f59e0b"
+            color:  batteryBar._warnColor
         }
         Rectangle {   // green: above the Return level
             x:      batteryBar._x(batteryBar._returnAt)
             height: barTrack.height
             width:  batteryBar._x(Math.max(0, batteryBar._level - batteryBar._returnAt))
-            color:  "#22c55e"
+            color:  batteryBar._okColor
+        }
+        // Cut into cells, like the HUD's pass segments: one cell is 2%.
+        Repeater {
+            model: 49
+            delegate: Rectangle {
+                x:      batteryBar._x(2 * (index + 1)) - width / 2
+                width:  Math.max(1, ScreenTools.defaultFontPixelWidth * 0.25)
+                height: batteryBar._barHeight
+                color:  batteryBar._glass
+            }
         }
 
         // Failsafe markers: a tick on the bar and what PX4 does there.
         Repeater {
             model: batteryBar._bar ? [
-                { pct: batteryBar._landAt,   text: batteryBar._bar.landAction,   color: "#ef4444" },
-                { pct: batteryBar._returnAt, text: batteryBar._bar.returnAction, color: "#f59e0b" }
+                { pct: batteryBar._landAt,   text: batteryBar._bar.landAction,   color: batteryBar._badColor },
+                { pct: batteryBar._returnAt, text: batteryBar._bar.returnAction, color: batteryBar._warnColor }
             ] : []
 
             delegate: Item {
@@ -162,16 +177,17 @@ Item {
                 Rectangle {
                     x:      -width / 2
                     y:      batteryBar._barHeight
-                    width:  markerLabel.width + ScreenTools.defaultFontPixelWidth
-                    height: markerLabel.height
-                    radius: height / 4
-                    color:  modelData.color
+                    width:          markerLabel.width + ScreenTools.defaultFontPixelWidth
+                    height:         markerLabel.height
+                    color:          batteryBar._glass
+                    border.color:   modelData.color
+                    border.width:   1
 
                     QGCLabel {
                         id:               markerLabel
                         anchors.centerIn: parent
                         text:             modelData.text
-                        color:            "black"
+                        color:            modelData.color
                         font.bold:        true
                         font.pointSize:   ScreenTools.smallFontPointSize
                     }
@@ -185,16 +201,18 @@ Item {
             y:      batteryBar._barHeight
             z:      1   // over the failsafe labels when the level is near them
             x:      Math.max(0, Math.min(batteryBar.width - width, batteryBar._x(batteryBar._level) - width / 2))
-            width:  batteryText.width + ScreenTools.defaultFontPixelWidth
-            height: batteryText.height + ScreenTools.defaultFontPixelHeight * 0.1
-            radius: height / 4
-            color:  Qt.rgba(0, 0, 0, 0.7)
+            width:          batteryText.width + ScreenTools.defaultFontPixelWidth
+            height:         batteryText.height + ScreenTools.defaultFontPixelHeight * 0.1
+            color:          batteryBar._glass
+            border.color:   batteryBar._levelColor
+            border.width:   1
 
             QGCLabel {
                 id:               batteryText
                 anchors.centerIn: parent
-                color:            "white"
+                color:            batteryBar._levelColor
                 font.bold:        true
+                font.features:    ({ "tnum": 1 })
                 text: {
                     var bar = batteryBar._bar
                     if (!bar) {

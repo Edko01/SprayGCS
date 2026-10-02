@@ -126,7 +126,7 @@ Save it, select it and click **Connect**. If Windows asks whether SprayGCS may u
 2. Tap **Draw Field Boundary** and tap the corners of an open grass area near the drone.
 3. Tap **Upload**, go back to **Fly**, and slide **Start Mission**.
 
-The top of the screen shows the battery bar and the phase (TO FIELD, SPRAYING · Pass 3 / 20). A blue trail marks where the drone has sprayed. Press **Return** mid-field to try the breakpoint: after it lands, tap **Resume Job**, then **Start Mission** again.
+The top of the screen shows the battery bar and the job's status (SPRAYING, Pass 3 of 20), with a segment for each pass. Speed, height and the pump are at the bottom right. A blue trail marks where the drone has sprayed. Press **Return** mid-field to try the breakpoint: after it lands, tap **Resume Job**, then **Start Mission** again.
 
 ## Every time after that
 
