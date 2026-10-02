@@ -193,6 +193,19 @@ Item {
         interiorOpacity: 0.0
     }
 
+    // A field with no boundary yet starts in Trace: each tap on the map adds a corner.
+    function _traceNewField() {
+        if (!_destroying && polygonVisuals.interactive && _polygon.count === 0 && !_polygon.traceMode) {
+            _polygon.traceMode = true
+        }
+    }
+
+    // Called later, so the boundary visuals have set up their toolbar for the new state first.
+    Connections {
+        target: polygonVisuals
+        function onInteractiveChanged() { Qt.callLater(_root._traceNewField) }
+    }
+
     // ----- menus -------------------------------------------------------------
     QGCMenu {
         id: segmentMenu
@@ -1193,6 +1206,7 @@ Item {
         map.addMapItem(_startMarker)
         _createStartDrag()
         objMgr.createObject(editMouseAreaComponent, map, false /* not a map item */)
+        Qt.callLater(_traceNewField)
     }
 
     Component.onDestruction: {

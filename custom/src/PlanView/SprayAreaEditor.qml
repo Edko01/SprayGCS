@@ -90,7 +90,7 @@ Rectangle {
             wrapMode:            Text.WordWrap
             horizontalAlignment: Text.AlignHCenter
             font.pointSize:      ScreenTools.mediumFontPointSize
-            text:                qsTr("Draw the field boundary with the Polygon Tools on the map, or load a KML file.")
+            text:                qsTr("Tap the field's corners on the map, then tap Done Editing Boundary. Basic, Circular and Load KML/SHP are above the map.")
             visible:             !missionItem.fieldPolygon.isValid
         }
 

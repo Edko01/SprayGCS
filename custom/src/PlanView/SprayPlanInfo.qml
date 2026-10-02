@@ -204,7 +204,7 @@ Rectangle {
                 wrapMode:         Text.WordWrap
                 font.pointSize:   ScreenTools.smallFontPointSize
                 text:             _takeoffSet
-                                  ? qsTr("Then tap the field's corners on the map, or use the boundary tools to trace it, draw a circle, or load a KML or SHP file.")
+                                  ? qsTr("Then tap the field's corners on the map, or use the boundary tools above the map to draw a circle or load a KML or SHP file.")
                                   : qsTr("Place the takeoff point first.")
             }
             QGCLabel {
