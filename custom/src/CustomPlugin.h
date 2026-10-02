@@ -48,6 +48,9 @@ public:
     /// Use the in-app file picker everywhere (large, readable, same as on the
     /// tablet) instead of the small system dialog on desktop.
     bool useMobileFileDialog() const final { return true; }
+    /// No terrain profile / mission stats panel under the Plan map: the drone
+    /// flies a set height (terrain following is onboard) and the job panel has the numbers.
+    bool showMissionStatus() const final { return false; }
 
 private:
     QGCCorePlugin *_plugin = nullptr;
