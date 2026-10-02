@@ -188,6 +188,7 @@ Item {
                         anchors.centerIn: parent
                         text:             modelData.text
                         color:            modelData.color
+                        renderType:       Text.CurveRendering
                         font.family:      "Chakra Petch"
                         font.bold:        true
                         font.pointSize:   ScreenTools.smallFontPointSize
@@ -212,6 +213,7 @@ Item {
                 id:               batteryText
                 anchors.centerIn: parent
                 color:            batteryBar._levelColor
+                renderType:       Text.CurveRendering
                 font.family:      "Chakra Petch"
                 font.bold:        true
                 text: {

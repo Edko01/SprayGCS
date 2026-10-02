@@ -61,8 +61,11 @@ Item {
 
     // ---- components -------------------------------------------------------------
 
-    // The HUD's typeface, registered by CustomPlugin.
+    // The HUD's typeface, registered by CustomPlugin. Drawn as curves, like the
+    // panels: the glyph-cache text path showed this font in the wrong colours
+    // under WSL (white as yellow, grey as black).
     component HudText: QGCLabel {
+        renderType:  Text.CurveRendering
         font.family: "Chakra Petch"
         font.weight: Font.Medium
     }
@@ -140,14 +143,14 @@ Item {
                     anchors.right:  readout.alignRight ? parent.right : undefined
                     text:           readout.caption
                     color:          readout.s.dim
-                    font.pointSize: ScreenTools.smallFontPointSize
+                    font.pointSize: ScreenTools.defaultFontPointSize
                 }
                 HudText {
                     anchors.left:   readout.alignRight ? parent.left : undefined
                     anchors.right:  readout.alignRight ? undefined : parent.right
                     text:           readout.planText
                     color:          readout._off ? readout.s.warn : readout.s.dim
-                    font.pointSize: ScreenTools.smallFontPointSize
+                    font.pointSize: ScreenTools.defaultFontPointSize
                     visible:        readout._hasPlan
                 }
             }
@@ -338,7 +341,7 @@ Item {
                 width:          parent.width
                 text:           cell.caption
                 color:          cell.s.dim
-                font.pointSize: ScreenTools.smallFontPointSize
+                font.pointSize: ScreenTools.defaultFontPointSize
                 elide:          Text.ElideRight
             }
             Row {
@@ -370,7 +373,7 @@ Item {
                     text:           cell.value
                     color:          cell.valueColor
                     font.weight:    Font.Bold
-                    font.pointSize: ScreenTools.largeFontPointSize
+                    font.pointSize: ScreenTools.mediumFontPointSize
                     elide:          Text.ElideRight
                 }
             }
@@ -378,7 +381,7 @@ Item {
                 width:          parent.width
                 text:           cell.detail
                 color:          cell.s.dim
-                font.pointSize: ScreenTools.smallFontPointSize
+                font.pointSize: ScreenTools.defaultFontPointSize * 0.9
                 elide:          Text.ElideRight
             }
         }
