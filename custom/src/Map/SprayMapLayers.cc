@@ -173,7 +173,6 @@ QVariantList SprayMapLayers::layers() const
         map[QStringLiteral("tileMinLevel")] = layer.tiles ? layer.tileMinLevel : -1;
         map[QStringLiteral("tileMaxLevel")] = layer.tiles ? layer.tileMaxLevel : -1;
         map[QStringLiteral("visible")]      = layer.visible;
-        map[QStringLiteral("opacity")]      = layer.opacity;
         map[QStringLiteral("remote")]       = !layer.urlTemplate.isEmpty();
         map[QStringLiteral("offline")]      = layer.offline;
         list.append(map);
@@ -488,17 +487,6 @@ void SprayMapLayers::setLayerVisible(int index, bool visible)
         return;
     }
     _layers[index].visible = visible;
-    _save();
-    emit layersChanged();
-}
-
-void SprayMapLayers::setLayerOpacity(int index, double opacity)
-{
-    opacity = std::clamp(opacity, 0.1, 1.0);
-    if (index < 0 || index >= _layers.count() || qFuzzyCompare(_layers[index].opacity, opacity)) {
-        return;
-    }
-    _layers[index].opacity = opacity;
     _save();
     emit layersChanged();
 }
@@ -824,7 +812,6 @@ void SprayMapLayers::_save() const
         object[QStringLiteral("height")]     = layer.height;
         object[QStringLiteral("zoomLevel")]  = layer.zoomLevel;
         object[QStringLiteral("visible")]    = layer.visible;
-        object[QStringLiteral("opacity")]    = layer.opacity;
         if (!layer.urlTemplate.isEmpty()) {
             object[QStringLiteral("urlTemplate")] = layer.urlTemplate;
             object[QStringLiteral("offline")]     = layer.offline;
@@ -859,7 +846,6 @@ void SprayMapLayers::_restore()
         layer.height     = object[QStringLiteral("height")].toInt();
         layer.zoomLevel  = object[QStringLiteral("zoomLevel")].toDouble();
         layer.visible    = object[QStringLiteral("visible")].toBool(true);
-        layer.opacity     = object[QStringLiteral("opacity")].toDouble(1.0);
         layer.urlTemplate = object[QStringLiteral("urlTemplate")].toString();
         layer.offline     = object[QStringLiteral("offline")].toBool(false);
         const bool hasOverview = layer.width > 0 && layer.height > 0 && QFile::exists(_imagePath(layer));

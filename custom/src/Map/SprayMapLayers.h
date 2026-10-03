@@ -31,7 +31,7 @@ class SprayMapLayers : public QObject
 
     /// One map per layer: name, url (the overview), north, south, east, west,
     /// width, height (overview pixels), zoomLevel (where the overview shows at
-    /// natural size), tileMinLevel, tileMaxLevel (-1: no tiles), visible, opacity,
+    /// natural size), tileMinLevel, tileMaxLevel (-1: no tiles), visible,
     /// remote (tiles from a link), offline (a remote layer saved here).
     Q_PROPERTY(QVariantList layers   READ layers   NOTIFY layersChanged)
     Q_PROPERTY(bool         loading  READ loading  NOTIFY loadingChanged)    ///< a GeoTIFF or tile link is being worked on
@@ -56,7 +56,6 @@ public:
         int     tileMinLevel = -1;
         int     tileMaxLevel = -1;
         bool    visible      = true;
-        double  opacity      = 1.0;
         QString urlTemplate;          ///< tiles from this link ({z}, {x}, {y}); empty for a GeoTIFF
         bool    offline      = false; ///< all of a link's tiles are saved here
         std::shared_ptr<const TileIndex> tiles;
@@ -86,7 +85,6 @@ public:
     Q_INVOKABLE void saveOffline(int index);
     Q_INVOKABLE void removeLayer(int index);
     Q_INVOKABLE void setLayerVisible(int index, bool visible);
-    Q_INVOKABLE void setLayerOpacity(int index, double opacity);
 
     /// Tiles of layer `index` at `level` within the given edges (at most `maxCount`):
     /// each a map of key ("level/x/y"), url, north, west (its top-left corner).

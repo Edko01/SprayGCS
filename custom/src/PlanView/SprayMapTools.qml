@@ -317,7 +317,7 @@ Item {
                                   ? qsTr("Tap an image's name to go to it.")
                                   : qsTr("Orthomosaics (GeoTIFF) from your mapping software, shown under the plan here and in Fly.")
             }
-            // The model is the count, so moving a slider doesn't rebuild the rows.
+            // The model is the count, so a change to one layer doesn't rebuild the rows.
             Repeater {
                 model: _root._mapLayers ? _root._mapLayers.layers.length : 0
 
@@ -362,14 +362,6 @@ Item {
                         visible:          !!layerRow._layer && layerRow._layer.remote && !layerRow._layer.offline
                         enabled:          !_root._mapLayers.loading
                         onClicked:        _root._mapLayers.saveOffline(layerRow.index)
-                    }
-                    QGCSlider {
-                        Layout.fillWidth: true
-                        from:             0.1
-                        to:               1.0
-                        value:            layerRow._layer ? layerRow._layer.opacity : 1.0
-                        enabled:          !!layerRow._layer && layerRow._layer.visible
-                        onMoved:          _root._mapLayers.setLayerOpacity(layerRow.index, value)
                     }
                 }
             }

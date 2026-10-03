@@ -40,7 +40,7 @@ Item {
         function onHeightChanged()    { if (!viewTimer.running) { viewTimer.start() } }
     }
 
-    // The model is the number of layers, so a change of opacity or visibility
+    // The model is the number of layers, so showing or hiding one
     // updates a layer's images instead of making them again.
     Repeater {
         model: _root.map ? _root._layers.length : 0
@@ -180,12 +180,9 @@ Item {
             anchorPoint.x: 0
             anchorPoint.y: 0
             zoomLevel:     _layer ? _layer.zoomLevel : 0
-            opacity:       _layer ? _layer.opacity : 1
             z:             1   // under everything QGC draws (its map items start at 47)
-            // Under the tiles it fills gaps while they load; when faded it would
-            // double up with them, so then it steps aside once they're in.
+            // Also under the tiles, where it fills gaps while they load.
             visible:       !!_layer && _layer.visible
-                           && (!layerDelegate.tileMode || _layer.opacity > 0.99 || layerDelegate.pending > 0)
 
             sourceItem: Image {
                 width:        overviewItem._layer ? overviewItem._layer.width : 0
@@ -232,7 +229,6 @@ Item {
 
             anchorPoint.x: 0
             anchorPoint.y: 0
-            opacity:       layerDelegate && layerDelegate.layerData ? layerDelegate.layerData.opacity : 1
             visible:       !!layerDelegate && layerDelegate.tileMode
             z:             _retired ? 2 : 3
 
