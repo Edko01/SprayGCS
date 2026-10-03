@@ -367,7 +367,9 @@ Item {
             }
             QGCButton {
                 Layout.fillWidth: true
-                text:             _root._mapLayers && _root._mapLayers.loading ? qsTr("Reading the image...") : qsTr("Add Field Image (GeoTIFF)")
+                text:             _root._mapLayers && _root._mapLayers.loading
+                                  ? qsTr("Making map tiles... %1%").arg(_root._mapLayers.progress)
+                                  : qsTr("Add Field Image (GeoTIFF)")
                 enabled:          !!_root._mapLayers && !_root._mapLayers.loading
                 onClicked:        geoTiffDialog.openForLoad()
             }

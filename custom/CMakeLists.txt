@@ -255,6 +255,7 @@ set(CUSTOM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/MissionManager/SprayAreaPlanCreator.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Spray/GeoTiff.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Spray/GeoTiff.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Spray/WebMercator.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Spray/SprayMission.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Spray/SprayMission.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Spray/SprayPathGenerator.cc

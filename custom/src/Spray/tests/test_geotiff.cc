@@ -1,8 +1,9 @@
 // Unit tests for GeoTiff (GeoTIFF structure, georeferencing and coordinate
-// conversions). No Qt needed. Build and run from the custom/src/Spray folder:
+// conversions) and the WebMercator tile grid. No Qt needed. Build and run from the custom/src/Spray folder:
 //   g++ -std=c++17 -O2 -Wall -Wextra -Wshadow -I. tests/test_geotiff.cc GeoTiff.cc -o /tmp/test_geotiff && /tmp/test_geotiff
 // Optionally pass GeoTIFF files to print what is read from them.
 #include "GeoTiff.h"
+#include "WebMercator.h"
 
 #include <cmath>
 #include <cstdio>
@@ -300,6 +301,35 @@ static void testTransformationMatrix()
     CHECK(near(p.lat, expected.lat, 1e-10) && near(p.lon, expected.lon, 1e-10), "matrix point");
 }
 
+static void testTileGrid()
+{
+    namespace wm = spray::webmercator;
+    CHECK(near(wm::xFromLon(-180), 0, 1e-15) && near(wm::xFromLon(180), 1, 1e-15) && near(wm::yFromLat(0), 0.5, 1e-15), "grid edges");
+    const double lat = 41.3, lon = -83.07;
+    CHECK(near(wm::latFromY(wm::yFromLat(lat)), lat, 1e-10) && near(wm::lonFromX(wm::xFromLon(lon)), lon, 1e-12), "round trip");
+    CHECK(wm::yFromLat(89.9) > -1e-9 && wm::yFromLat(-89.9) < 1 + 1e-9, "clamped poles: %.12f %.12f", wm::yFromLat(89.9), wm::yFromLat(-89.9));
+
+    // Slippy-map tile numbers for a known place: Bellevue, Ohio area at zoom 18.
+    // x = floor((lon + 180) / 360 * 2^z), y = floor((1 - asinh(tan(lat)) / pi) / 2 * 2^z)
+    const int z = 18;
+    const double n = std::pow(2.0, z);
+    const int ex = int(std::floor((lon + 180) / 360 * n));
+    const int ey = int(std::floor((1 - std::asinh(std::tan(lat * kPi / 180)) / kPi) / 2 * n));
+    CHECK(wm::tileIndex(wm::xFromLon(lon), z) == ex && wm::tileIndex(wm::yFromLat(lat), z) == ey,
+          "tile %d,%d vs %d,%d", wm::tileIndex(wm::xFromLon(lon), z), wm::tileIndex(wm::yFromLat(lat), z), ex, ey);
+
+    // A tile's top-left corner maps back into that tile.
+    const double north = wm::latFromY(ey / n), west = wm::lonFromX(ex / n);
+    CHECK(wm::tileIndex(wm::xFromLon(west + 1e-9), z) == ex && wm::tileIndex(wm::yFromLat(north - 1e-9), z) == ey, "corner in tile");
+
+    // Ranges: a 400 m square at zoom 20 (about 0.1 m tiles' pixels) spans roughly 400 / (40075016 * cos(41.3) / 2^20 ) / 256 tiles.
+    const double x0 = wm::xFromLon(-83.075), x1 = wm::xFromLon(-83.0702), y0 = wm::yFromLat(41.302), y1 = wm::yFromLat(41.2984);
+    const wm::TileRange r = wm::tileRange(x0, y0, x1, y1, 20);
+    CHECK(r.count() > 100 && r.count() < 400, "range count %lld", r.count());
+    CHECK(wm::intersect(r, wm::TileRange{ r.x1 + 1, r.y0, r.x1 + 5, r.y1 }).count() == 0, "disjoint ranges");
+    CHECK(wm::tileIndex(1.0, 3) == 7 && wm::tileIndex(-0.1, 3) == 0, "index clamped to the world");
+}
+
 static void testErrors()
 {
     MemorySource garbage(std::vector<unsigned char>{ 'h', 'e', 'l', 'l', 'o', 0, 0, 0, 0, 0 });
@@ -348,6 +378,7 @@ int main(int argc, char** argv)
     testWgs84WithOverviews(true, true);
     testUtmPixelIsPointAndNoData();
     testTransformationMatrix();
+    testTileGrid();
     testErrors();
 
     for (int i = 1; i < argc; i++) {

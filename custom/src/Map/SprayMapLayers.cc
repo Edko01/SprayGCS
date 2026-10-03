@@ -3,6 +3,7 @@
 #include "AppMessages.h"
 #include "GeoTiff.h"
 #include "QGCLoggingCategory.h"
+#include "WebMercator.h"
 
 #include <QtConcurrent/QtConcurrentRun>
 #include <QtCore/QDir>
@@ -23,15 +24,22 @@
 
 #include <algorithm>
 #include <cmath>
-#include <numbers>
 
 QGC_LOGGING_CATEGORY(SprayMapLayersLog, "Custom.SprayMapLayers")
 
+namespace wm = spray::webmercator;
+
 namespace {
 
-constexpr double MaxMercatorLat = 85.05112878;
-constexpr int    MapTileSize    = 256;    // QGC's map tiles: world width at zoom z is 256 * 2^z px
-constexpr int    MaxDecodeMB    = 2048;   // refuse to decode a full image bigger than this
+constexpr int    TileSize       = 256;      // also QGC's map tiles: the world is 256 * 2^z px wide at zoom z
+constexpr int    MaxTileLevel   = 22;       // about 2 cm per pixel
+constexpr qint64 MaxTopTiles    = 40000;    // at the most detailed level; beyond it the level drops
+constexpr int    JpegQuality    = 85;
+#if defined(Q_OS_ANDROID) || defined(Q_OS_IOS)
+constexpr qint64 DecodeBudgetMB = 384;      // largest image decoded at once
+#else
+constexpr qint64 DecodeBudgetMB = 1024;
+#endif
 
 class FileByteSource : public spray::ByteSource {
 public:
@@ -50,26 +58,93 @@ private:
     QFile &_file;
 };
 
-// Normalised Web Mercator: x and y run 0..1 from the top-left of the world.
 QPointF toMercator(const spray::LatLon &point)
 {
-    const double lat = std::clamp(point.lat, -MaxMercatorLat, MaxMercatorLat) * std::numbers::pi / 180.0;
-    const double s   = std::sin(lat);
-    return QPointF((point.lon + 180.0) / 360.0, 0.5 - std::log((1.0 + s) / (1.0 - s)) / (4.0 * std::numbers::pi));
+    return QPointF(wm::xFromLon(point.lon), wm::yFromLat(point.lat));
 }
 
-double mercatorYToLat(double y)
+enum class Fill { Empty, Opaque, Partial };
+
+Fill fillOf(const QImage &image)
 {
-    return std::atan(std::sinh(std::numbers::pi * (1.0 - 2.0 * y))) * 180.0 / std::numbers::pi;
+    bool anyClear = false;
+    bool anyInk   = false;
+    for (int y = 0; y < image.height(); y++) {
+        const QRgb *line = reinterpret_cast<const QRgb *>(image.constScanLine(y));
+        for (int x = 0; x < image.width(); x++) {
+            const int alpha = qAlpha(line[x]);
+            anyInk   = anyInk || alpha != 0;
+            anyClear = anyClear || alpha != 255;
+            if (anyInk && anyClear) {
+                return Fill::Partial;
+            }
+        }
+    }
+    return anyInk ? Fill::Opaque : Fill::Empty;
+}
+
+QString tileFile(const QString &tileFolder, int level, int x, int y, bool jpeg)
+{
+    return QStringLiteral("%1/%2/%3_%4.%5").arg(tileFolder).arg(level).arg(x).arg(y).arg(jpeg ? QStringLiteral("jpg") : QStringLiteral("png"));
+}
+
+// Saves a tile unless it's empty: JPEG when fully opaque (small), PNG at the image's edges.
+bool saveTile(const QImage &tile, const QString &tileFolder, int level, int x, int y,
+              SprayMapLayers::TileIndex &index)
+{
+    const Fill fill = fillOf(tile);
+    if (fill == Fill::Empty) {
+        return true;
+    }
+    const bool jpeg = fill == Fill::Opaque;
+    const QString path = tileFile(tileFolder, level, x, y, jpeg);
+    const bool saved = jpeg ? tile.convertToFormat(QImage::Format_RGB32).save(path, "JPG", JpegQuality)
+                            : tile.save(path, "PNG");
+    if (saved) {
+        index.insert(SprayMapLayers::tileKey(level, x, y), jpeg);
+    }
+    return saved;
+}
+
+QJsonObject indexToJson(int minLevel, int maxLevel, const SprayMapLayers::TileIndex &index)
+{
+    // Flat list of level, x, y, jpeg (1/0) per tile.
+    QJsonArray tiles;
+    for (auto it = index.constBegin(); it != index.constEnd(); ++it) {
+        const quint64 key = it.key();
+        tiles.append(static_cast<int>(key >> 56));
+        tiles.append(static_cast<int>((key >> 28) & 0xFFFFFFF));
+        tiles.append(static_cast<int>(key & 0xFFFFFFF));
+        tiles.append(it.value() ? 1 : 0);
+    }
+    QJsonObject object;
+    object[QStringLiteral("minLevel")] = minLevel;
+    object[QStringLiteral("maxLevel")] = maxLevel;
+    object[QStringLiteral("tiles")]    = tiles;
+    return object;
 }
 
 } // namespace
+
+quint64 SprayMapLayers::tileKey(int level, int x, int y)
+{
+    return (static_cast<quint64>(level) << 56) | (static_cast<quint64>(static_cast<quint32>(x)) << 28)
+           | static_cast<quint64>(static_cast<quint32>(y));
+}
 
 SprayMapLayers::SprayMapLayers(QObject *parent)
     : QObject(parent)
 {
     (void) connect(&_watcher, &QFutureWatcher<LoadResult>::finished, this, &SprayMapLayers::_loaded);
+    (void) connect(&_watcher, &QFutureWatcher<LoadResult>::progressValueChanged, this, &SprayMapLayers::progressChanged);
     _restore();
+}
+
+SprayMapLayers::~SprayMapLayers()
+{
+    // Don't leave a tile job running past the app.
+    _watcher.cancel();
+    _watcher.waitForFinished();
 }
 
 QVariantList SprayMapLayers::layers() const
@@ -77,18 +152,56 @@ QVariantList SprayMapLayers::layers() const
     QVariantList list;
     for (const Layer &layer : _layers) {
         QVariantMap map;
-        map[QStringLiteral("name")]      = layer.name;
-        map[QStringLiteral("url")]       = QUrl::fromLocalFile(_imagePath(layer));   // a QUrl: the folder name can have spaces
-        map[QStringLiteral("north")]     = layer.north;
-        map[QStringLiteral("south")]     = layer.south;
-        map[QStringLiteral("east")]      = layer.east;
-        map[QStringLiteral("west")]      = layer.west;
-        map[QStringLiteral("width")]     = layer.width;
-        map[QStringLiteral("height")]    = layer.height;
-        map[QStringLiteral("zoomLevel")] = layer.zoomLevel;
-        map[QStringLiteral("visible")]   = layer.visible;
-        map[QStringLiteral("opacity")]   = layer.opacity;
+        map[QStringLiteral("name")]         = layer.name;
+        map[QStringLiteral("url")]          = QUrl::fromLocalFile(_imagePath(layer));   // a QUrl: the folder name can have spaces
+        map[QStringLiteral("north")]        = layer.north;
+        map[QStringLiteral("south")]        = layer.south;
+        map[QStringLiteral("east")]         = layer.east;
+        map[QStringLiteral("west")]         = layer.west;
+        map[QStringLiteral("width")]        = layer.width;
+        map[QStringLiteral("height")]       = layer.height;
+        map[QStringLiteral("zoomLevel")]    = layer.zoomLevel;
+        map[QStringLiteral("tileMinLevel")] = layer.tiles ? layer.tileMinLevel : -1;
+        map[QStringLiteral("tileMaxLevel")] = layer.tiles ? layer.tileMaxLevel : -1;
+        map[QStringLiteral("visible")]      = layer.visible;
+        map[QStringLiteral("opacity")]      = layer.opacity;
         list.append(map);
+    }
+    return list;
+}
+
+QVariantList SprayMapLayers::tilesInView(int index, int level, double north, double south, double west, double east,
+                                         int maxCount) const
+{
+    QVariantList list;
+    if (index < 0 || index >= _layers.count()) {
+        return list;
+    }
+    const Layer &layer = _layers[index];
+    if (!layer.tiles || level < layer.tileMinLevel || level > layer.tileMaxLevel) {
+        return list;
+    }
+    const wm::TileRange view  = wm::tileRange(wm::xFromLon(west), wm::yFromLat(north), wm::xFromLon(east), wm::yFromLat(south), level);
+    const wm::TileRange image = wm::tileRange(wm::xFromLon(layer.west), wm::yFromLat(layer.north),
+                                              wm::xFromLon(layer.east), wm::yFromLat(layer.south), level);
+    const wm::TileRange range = wm::intersect(view, image);
+    const double tiles = static_cast<double>(1 << level);
+    for (int y = range.y0; y <= range.y1; y++) {
+        for (int x = range.x0; x <= range.x1; x++) {
+            const auto it = layer.tiles->constFind(tileKey(level, x, y));
+            if (it == layer.tiles->constEnd()) {
+                continue;
+            }
+            if (list.count() >= maxCount) {
+                return list;
+            }
+            QVariantMap tile;
+            tile[QStringLiteral("key")]   = QStringLiteral("%1/%2/%3").arg(level).arg(x).arg(y);
+            tile[QStringLiteral("url")]   = QUrl::fromLocalFile(_tilePath(layer, level, x, y, it.value()));
+            tile[QStringLiteral("north")] = wm::latFromY(y / tiles);
+            tile[QStringLiteral("west")]  = wm::lonFromX(x / tiles);
+            list.append(tile);
+        }
     }
     return list;
 }
@@ -101,6 +214,7 @@ void SprayMapLayers::addGeoTiff(const QString &path)
     }
     _watcher.setFuture(QtConcurrent::run(&SprayMapLayers::loadGeoTiff, path, _folder()));
     emit loadingChanged();
+    emit progressChanged();
 }
 
 void SprayMapLayers::removeLayer(int index)
@@ -109,6 +223,7 @@ void SprayMapLayers::removeLayer(int index)
         return;
     }
     (void) QFile::remove(_imagePath(_layers[index]));
+    (void) QDir(_folder() + QStringLiteral("/") + _layers[index].id).removeRecursively();
     _layers.removeAt(index);
     _save();
     emit layersChanged();
@@ -135,16 +250,21 @@ void SprayMapLayers::setLayerOpacity(int index, double opacity)
     emit layersChanged();
 }
 
-SprayMapLayers::LoadResult SprayMapLayers::loadGeoTiff(const QString &path, const QString &folder)
+void SprayMapLayers::loadGeoTiff(QPromise<LoadResult> &promise, const QString &path, const QString &folder)
 {
     LoadResult result;
     const QString fileName = QFileInfo(path).fileName();
+    const auto fail = [&](const QString &error) {
+        result.error = error;
+        promise.addResult(result);
+    };
+    promise.setProgressRange(0, 100);
 
     // ---- where it is ----
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) {
-        result.error = tr("Couldn't open %1.").arg(fileName);
-        return result;
+        fail(tr("Couldn't open %1.").arg(fileName));
+        return;
     }
     spray::GeoTiff geo;
     FileByteSource source(file);
@@ -152,56 +272,58 @@ SprayMapLayers::LoadResult SprayMapLayers::loadGeoTiff(const QString &path, cons
     case spray::GeoTiffError::None:
         break;
     case spray::GeoTiffError::NotTiff:
-        result.error = tr("%1 isn't a TIFF image, or it's damaged.").arg(fileName);
-        return result;
+        fail(tr("%1 isn't a TIFF image, or it's damaged.").arg(fileName));
+        return;
     case spray::GeoTiffError::NoGeoreference:
-        result.error = tr("%1 has no map position. Export it from the mapping software as a GeoTIFF.").arg(fileName);
-        return result;
+        fail(tr("%1 has no map position. Export it from the mapping software as a GeoTIFF.").arg(fileName));
+        return;
     case spray::GeoTiffError::UnsupportedCrs:
-        result.error = tr("%1 uses a coordinate system SprayGCS can't place (EPSG:%2). Export it in WGS84 (EPSG:4326), "
-                          "Web Mercator (EPSG:3857) or UTM.").arg(fileName).arg(geo.epsgCode());
-        return result;
+        fail(tr("%1 uses a coordinate system SprayGCS can't place (EPSG:%2). Export it in WGS84 (EPSG:4326), "
+                "Web Mercator (EPSG:3857) or UTM.").arg(fileName).arg(geo.epsgCode()));
+        return;
     }
     file.close();
 
-    // ---- the pixels: the smallest overview still MaxImageSide across, else the full image ----
+    // ---- the pixels: the most detailed image in the file that fits the memory budget ----
     const std::vector<spray::GeoTiffImage> &images = geo.images();
     const spray::GeoTiffImage &full = images[0];
-    int pick = 0;
-    uint32_t pickSide = 0;
+    int pick = -1;
+    qint64 pickPixels = 0;
     for (size_t i = 0; i < images.size(); i++) {
-        const uint32_t side = std::max(images[i].width, images[i].height);
-        if (!images[i].isMask() && side >= static_cast<uint32_t>(MaxImageSide) && (pickSide == 0 || side < pickSide)) {
-            pick     = static_cast<int>(i);
-            pickSide = side;
+        const qint64 pixels = static_cast<qint64>(images[i].width) * images[i].height;
+        if (!images[i].isMask() && pixels * 4 / (1024 * 1024) <= DecodeBudgetMB && pixels > pickPixels) {
+            pick       = static_cast<int>(i);
+            pickPixels = pixels;
         }
+    }
+    if (pick < 0) {
+        fail(tr("%1 is too big to load (%2 × %3 pixels) and has no smaller overviews. Export it at a lower "
+                "resolution, or with overviews (pyramids), and add it again.").arg(fileName).arg(full.width).arg(full.height));
+        return;
     }
 
     QImageReader reader(path, "tiff");
     if (pick != 0 && !reader.jumpToImage(pick)) {
-        qCDebug(SprayMapLayersLog) << "Couldn't jump to overview" << pick << "of" << path;
-        pick = 0;
-        reader.setFileName(path);
+        fail(tr("Couldn't read the pixels of %1: %2").arg(fileName, reader.errorString()));
+        return;
     }
-    const qint64 decodeMB = static_cast<qint64>(images[pick].width) * images[pick].height * 8 / (1024 * 1024);
-    if (decodeMB > MaxDecodeMB) {
-        result.error = tr("%1 is too big to load (%2 × %3 pixels) and has no smaller overviews. Export it at a lower "
-                          "resolution, or with overviews (pyramids), and add it again.")
-                           .arg(fileName).arg(full.width).arg(full.height);
-        return result;
-    }
-    if (QImageReader::allocationLimit() > 0 && decodeMB + 64 > QImageReader::allocationLimit()) {
-        QImageReader::setAllocationLimit(static_cast<int>(decodeMB + 64));
+    const qint64 decodeMB = pickPixels * 8 / (1024 * 1024) + 64;   // 16-bit images decode at 8 bytes a pixel
+    if (QImageReader::allocationLimit() > 0 && decodeMB > QImageReader::allocationLimit()) {
+        QImageReader::setAllocationLimit(static_cast<int>(decodeMB));
     }
     QImage image = reader.read();
     if (image.isNull()) {
-        result.error = tr("Couldn't read the pixels of %1: %2").arg(fileName, reader.errorString());
-        return result;
+        fail(tr("Couldn't read the pixels of %1: %2").arg(fileName, reader.errorString()));
+        return;
+    }
+    promise.setProgressValue(15);
+    if (promise.isCanceled()) {
+        return;
     }
 
     // GDAL's "no data" colour (often black around the field) becomes transparent.
     const bool hadAlpha = image.hasAlphaChannel();
-    image = image.convertToFormat(QImage::Format_ARGB32);
+    image = std::move(image).convertToFormat(QImage::Format_ARGB32);
     if (!hadAlpha && geo.hasNoData() && geo.noData() >= 0.0 && geo.noData() <= 255.0) {
         const int noData = static_cast<int>(std::lround(geo.noData()));
         for (int y = 0; y < image.height(); y++) {
@@ -213,25 +335,22 @@ SprayMapLayers::LoadResult SprayMapLayers::loadGeoTiff(const QString &path, cons
             }
         }
     }
+    image = std::move(image).convertToFormat(QImage::Format_ARGB32_Premultiplied);
 
     // ---- onto the map: corners in Web Mercator, then an affine fit (exact for Web Mercator
     // and lat/lon images, centimetres off for a field-sized UTM image) ----
     const double toFullX = static_cast<double>(full.width) / image.width();
     const double toFullY = static_cast<double>(full.height) / image.height();
     QPointF corners[4];
-    const double cornerPixels[4][2] = { { 0, 0 }, { 1, 0 }, { 0, 1 }, { 1, 1 } };
+    const int cornerPixels[4][2] = { { 0, 0 }, { 1, 0 }, { 0, 1 }, { 1, 1 } };
     for (int i = 0; i < 4; i++) {
         spray::LatLon latLon;
         if (!geo.pixelToLatLon(cornerPixels[i][0] * image.width() * toFullX, cornerPixels[i][1] * image.height() * toFullY, latLon)) {
-            result.error = tr("%1 has a corner off the map.").arg(fileName);
-            return result;
+            fail(tr("%1 has a corner off the map.").arg(fileName));
+            return;
         }
         corners[i] = toMercator(latLon);
     }
-    const QPointF &topLeft    = corners[0];
-    const QPointF &topRight   = corners[1];
-    const QPointF &bottomLeft = corners[2];
-
     double minX = corners[0].x(), maxX = minX, minY = corners[0].y(), maxY = minY;
     for (const QPointF &corner : corners) {
         minX = std::min(minX, corner.x());
@@ -239,67 +358,178 @@ SprayMapLayers::LoadResult SprayMapLayers::loadGeoTiff(const QString &path, cons
         minY = std::min(minY, corner.y());
         maxY = std::max(maxY, corner.y());
     }
-    const double edgePerPixel = std::hypot(topRight.x() - topLeft.x(), topRight.y() - topLeft.y()) / image.width();
+    const double edgePerPixel = std::hypot(corners[1].x() - corners[0].x(), corners[1].y() - corners[0].y()) / image.width();
     if (!(edgePerPixel > 0.0) || !(maxX > minX) || !(maxY > minY)) {
-        result.error = tr("%1 has no size on the map.").arg(fileName);
-        return result;
+        fail(tr("%1 has no size on the map.").arg(fileName));
+        return;
     }
-    // Map-copy pixels per Mercator unit: the image's own resolution, shrunk to fit MaxImageSide.
-    const double fit = std::min(1.0, MaxImageSide / (std::max(maxX - minX, maxY - minY) / edgePerPixel));
-    const double scale = fit / edgePerPixel;
-    const int outWidth  = std::clamp(static_cast<int>(std::ceil((maxX - minX) * scale)), 1, MaxImageSide);
-    const int outHeight = std::clamp(static_cast<int>(std::ceil((maxY - minY) * scale)), 1, MaxImageSide);
-
-    // A big reduction looks better done by smooth scaling than by the painter's filter.
-    if (fit < 0.5) {
-        image = image.scaled(std::max(1, static_cast<int>(std::lround(image.width() * fit))),
-                             std::max(1, static_cast<int>(std::lround(image.height() * fit))),
-                             Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
-    }
-    const auto toOut = [&](const QPointF &mercator) {
-        return QPointF((mercator.x() - minX) * scale, (mercator.y() - minY) * scale);
-    };
-    const QPointF o00 = toOut(topLeft);
-    const QPointF o10 = toOut(topRight);
-    const QPointF o01 = toOut(bottomLeft);
-    const QTransform transform((o10.x() - o00.x()) / image.width(), (o10.y() - o00.y()) / image.width(),
-                               (o01.x() - o00.x()) / image.height(), (o01.y() - o00.y()) / image.height(),
-                               o00.x(), o00.y());
-
-    QImage out(outWidth, outHeight, QImage::Format_ARGB32_Premultiplied);
-    out.fill(Qt::transparent);
-    {
-        QPainter painter(&out);
-        painter.setRenderHint(QPainter::SmoothPixmapTransform);
-        painter.setTransform(transform);
-        painter.drawImage(QPointF(0, 0), image);
-    }
+    // Image pixel -> normalised Web Mercator.
+    const QTransform toMap((corners[1].x() - corners[0].x()) / image.width(), (corners[1].y() - corners[0].y()) / image.width(),
+                           (corners[2].x() - corners[0].x()) / image.height(), (corners[2].y() - corners[0].y()) / image.height(),
+                           corners[0].x(), corners[0].y());
 
     Layer &layer     = result.layer;
     layer.id         = QUuid::createUuid().toString(QUuid::WithoutBraces);
     layer.name       = QFileInfo(path).completeBaseName();
     layer.sourcePath = path;
-    layer.north      = mercatorYToLat(minY);
-    layer.south      = mercatorYToLat(minY + outHeight / scale);
-    layer.west       = minX * 360.0 - 180.0;
-    layer.east       = (minX + outWidth / scale) * 360.0 - 180.0;
-    layer.width      = outWidth;
-    layer.height     = outHeight;
-    layer.zoomLevel  = std::log2(scale / MapTileSize);
 
-    if (!QDir().mkpath(folder) || !out.save(folder + QStringLiteral("/") + layer.id + QStringLiteral(".png"), "PNG")) {
-        result.error = tr("Couldn't save the map copy of %1.").arg(fileName);
-        return result;
+    // ---- the overview: the whole image at up to MaxImageSide px ----
+    {
+        const double fit   = std::min(1.0, MaxImageSide / (std::max(maxX - minX, maxY - minY) / edgePerPixel));
+        const double scale = fit / edgePerPixel;   // overview pixels per Mercator unit
+        const int outWidth  = std::clamp(static_cast<int>(std::ceil((maxX - minX) * scale)), 1, MaxImageSide);
+        const int outHeight = std::clamp(static_cast<int>(std::ceil((maxY - minY) * scale)), 1, MaxImageSide);
+
+        // A big reduction looks better done by smooth scaling than by the painter's filter.
+        QImage small;
+        QTransform smallToMap = toMap;
+        if (fit < 0.5) {
+            small = image.scaled(std::max(1, static_cast<int>(std::lround(image.width() * fit))),
+                                 std::max(1, static_cast<int>(std::lround(image.height() * fit))),
+                                 Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+            smallToMap = QTransform::fromScale(static_cast<double>(image.width()) / small.width(),
+                                               static_cast<double>(image.height()) / small.height()) * toMap;
+        }
+        const QImage &drawn = small.isNull() ? image : small;
+
+        QImage out(outWidth, outHeight, QImage::Format_ARGB32_Premultiplied);
+        out.fill(Qt::transparent);
+        {
+            QPainter painter(&out);
+            painter.setRenderHint(QPainter::SmoothPixmapTransform);
+            painter.setTransform(smallToMap * QTransform::fromScale(scale, scale) * QTransform::fromTranslate(-minX * scale, -minY * scale));
+            painter.drawImage(QPointF(0, 0), drawn);
+        }
+        layer.north     = wm::latFromY(minY);
+        layer.south     = wm::latFromY(minY + outHeight / scale);
+        layer.west      = wm::lonFromX(minX);
+        layer.east      = wm::lonFromX(minX + outWidth / scale);
+        layer.width     = outWidth;
+        layer.height    = outHeight;
+        layer.zoomLevel = std::log2(scale / TileSize);
+
+        if (!QDir().mkpath(folder) || !out.save(folder + QStringLiteral("/") + layer.id + QStringLiteral(".png"), "PNG")) {
+            fail(tr("Couldn't save the map copy of %1.").arg(fileName));
+            return;
+        }
     }
-    qCDebug(SprayMapLayersLog) << "Loaded" << path << "image" << pick << image.size() << "->" << out.size()
-                               << "zoom" << layer.zoomLevel;
-    return result;
+    promise.setProgressValue(25);
+
+    // ---- tiles, from the overview's zoom down to the photo's own detail ----
+    const int minLevel = std::max(0, static_cast<int>(std::floor(layer.zoomLevel)));
+    int maxLevel = std::min(MaxTileLevel, static_cast<int>(std::lround(std::log2(1.0 / (edgePerPixel * TileSize)))));
+    while (maxLevel > minLevel && wm::tileRange(minX, minY, maxX, maxY, maxLevel).count() > MaxTopTiles) {
+        maxLevel--;
+    }
+    if (maxLevel <= minLevel) {
+        // The overview already holds all the detail there is.
+        promise.addResult(result);
+        return;
+    }
+
+    const QString tileFolder = folder + QStringLiteral("/") + layer.id;
+    auto index = std::make_shared<TileIndex>();
+    for (int level = minLevel; level <= maxLevel; level++) {
+        (void) QDir().mkpath(QStringLiteral("%1/%2").arg(tileFolder).arg(level));
+    }
+    const auto cancel = [&]() {
+        (void) QFile::remove(folder + QStringLiteral("/") + layer.id + QStringLiteral(".png"));
+        (void) QDir(tileFolder).removeRecursively();
+    };
+
+    // The most detailed level, straight from the image.
+    const wm::TileRange top = wm::tileRange(minX, minY, maxX, maxY, maxLevel);
+    const double topScale = static_cast<double>(TileSize) * (1 << maxLevel);   // pixels per Mercator unit
+    long long done = 0;
+    QImage tile(TileSize, TileSize, QImage::Format_ARGB32_Premultiplied);
+    for (int ty = top.y0; ty <= top.y1; ty++) {
+        for (int tx = top.x0; tx <= top.x1; tx++) {
+            tile.fill(Qt::transparent);
+            {
+                QPainter painter(&tile);
+                painter.setRenderHint(QPainter::SmoothPixmapTransform);
+                painter.setTransform(toMap * QTransform::fromScale(topScale, topScale)
+                                     * QTransform::fromTranslate(-tx * static_cast<double>(TileSize), -ty * static_cast<double>(TileSize)));
+                painter.drawImage(QPointF(0, 0), image);
+            }
+            if (!saveTile(tile, tileFolder, maxLevel, tx, ty, *index)) {
+                cancel();
+                fail(tr("Couldn't save the map tiles of %1.").arg(fileName));
+                return;
+            }
+            done++;
+        }
+        if (promise.isCanceled()) {
+            cancel();
+            return;
+        }
+        promise.setProgressValue(25 + static_cast<int>(60 * done / std::max<long long>(1, top.count())));
+    }
+    image = QImage();   // free the full image before the smaller levels
+
+    // Each less detailed level from four tiles of the one below it.
+    QImage quad(TileSize * 2, TileSize * 2, QImage::Format_ARGB32_Premultiplied);
+    for (int level = maxLevel - 1; level >= minLevel; level--) {
+        const wm::TileRange range = wm::tileRange(minX, minY, maxX, maxY, level);
+        for (int ty = range.y0; ty <= range.y1; ty++) {
+            for (int tx = range.x0; tx <= range.x1; tx++) {
+                quad.fill(Qt::transparent);
+                bool any = false;
+                {
+                    QPainter painter(&quad);
+                    for (int child = 0; child < 4; child++) {
+                        const int cx = tx * 2 + (child & 1);
+                        const int cy = ty * 2 + (child >> 1);
+                        const auto it = index->constFind(tileKey(level + 1, cx, cy));
+                        if (it == index->constEnd()) {
+                            continue;
+                        }
+                        const QImage childImage(tileFile(tileFolder, level + 1, cx, cy, it.value()));
+                        if (!childImage.isNull()) {
+                            painter.drawImage((child & 1) * TileSize, (child >> 1) * TileSize, childImage);
+                            any = true;
+                        }
+                    }
+                }
+                if (any && !saveTile(quad.scaled(TileSize, TileSize, Qt::IgnoreAspectRatio, Qt::SmoothTransformation)
+                                         .convertToFormat(QImage::Format_ARGB32_Premultiplied),
+                                     tileFolder, level, tx, ty, *index)) {
+                    cancel();
+                    fail(tr("Couldn't save the map tiles of %1.").arg(fileName));
+                    return;
+                }
+            }
+            if (promise.isCanceled()) {
+                cancel();
+                return;
+            }
+        }
+        promise.setProgressValue(85 + 15 * (maxLevel - level) / std::max(1, maxLevel - minLevel));
+    }
+
+    QFile indexFile(tileFolder + QStringLiteral("/tiles.json"));
+    if (!indexFile.open(QIODevice::WriteOnly | QIODevice::Truncate)
+        || indexFile.write(QJsonDocument(indexToJson(minLevel, maxLevel, *index)).toJson(QJsonDocument::Compact)) < 0) {
+        cancel();
+        fail(tr("Couldn't save the map tiles of %1.").arg(fileName));
+        return;
+    }
+    layer.tileMinLevel = minLevel;
+    layer.tileMaxLevel = maxLevel;
+    layer.tiles        = index;
+    qCDebug(SprayMapLayersLog) << "Loaded" << path << "image" << pick << "overview" << layer.width << "x" << layer.height
+                               << "tiles" << index->count() << "levels" << minLevel << "-" << maxLevel;
+    promise.addResult(result);
 }
 
 void SprayMapLayers::_loaded()
 {
-    const LoadResult result = _watcher.result();
     emit loadingChanged();
+    emit progressChanged();
+    if (_watcher.isCanceled() || _watcher.resultCount() == 0) {
+        return;
+    }
+    const LoadResult result = _watcher.result();
     if (!result.error.isEmpty()) {
         QGC::showAppMessage(result.error);
         return;
@@ -318,6 +548,11 @@ QString SprayMapLayers::_folder() const
 QString SprayMapLayers::_imagePath(const Layer &layer) const
 {
     return _folder() + QStringLiteral("/") + layer.id + QStringLiteral(".png");
+}
+
+QString SprayMapLayers::_tilePath(const Layer &layer, int level, int x, int y, bool jpeg) const
+{
+    return tileFile(_folder() + QStringLiteral("/") + layer.id, level, x, y, jpeg);
 }
 
 void SprayMapLayers::_save() const
@@ -368,8 +603,26 @@ void SprayMapLayers::_restore()
         layer.zoomLevel  = object[QStringLiteral("zoomLevel")].toDouble();
         layer.visible    = object[QStringLiteral("visible")].toBool(true);
         layer.opacity    = object[QStringLiteral("opacity")].toDouble(1.0);
-        if (!layer.id.isEmpty() && layer.width > 0 && layer.height > 0 && QFile::exists(_imagePath(layer))) {
-            _layers.append(layer);
+        if (layer.id.isEmpty() || layer.width <= 0 || layer.height <= 0 || !QFile::exists(_imagePath(layer))) {
+            continue;
         }
+
+        // Its tiles, if it has them (images added before tiles existed have only the overview).
+        QFile indexFile(_folder() + QStringLiteral("/") + layer.id + QStringLiteral("/tiles.json"));
+        if (indexFile.open(QIODevice::ReadOnly)) {
+            const QJsonObject index = QJsonDocument::fromJson(indexFile.readAll()).object();
+            const QJsonArray tiles = index[QStringLiteral("tiles")].toArray();
+            auto tileIndex = std::make_shared<TileIndex>();
+            tileIndex->reserve(tiles.count() / 4);
+            for (qsizetype i = 0; i + 3 < tiles.count(); i += 4) {
+                tileIndex->insert(tileKey(tiles[i].toInt(), tiles[i + 1].toInt(), tiles[i + 2].toInt()), tiles[i + 3].toInt() != 0);
+            }
+            if (!tileIndex->isEmpty()) {
+                layer.tileMinLevel = index[QStringLiteral("minLevel")].toInt(-1);
+                layer.tileMaxLevel = index[QStringLiteral("maxLevel")].toInt(-1);
+                layer.tiles        = tileIndex;
+            }
+        }
+        _layers.append(layer);
     }
 }
