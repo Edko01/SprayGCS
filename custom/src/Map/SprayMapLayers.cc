@@ -80,6 +80,8 @@ QVariantList SprayMapLayers::layers() const
         map[QStringLiteral("name")]      = layer.name;
         map[QStringLiteral("url")]       = QUrl::fromLocalFile(_imagePath(layer)).toString();
         map[QStringLiteral("north")]     = layer.north;
+        map[QStringLiteral("south")]     = layer.south;
+        map[QStringLiteral("east")]      = layer.east;
         map[QStringLiteral("west")]      = layer.west;
         map[QStringLiteral("width")]     = layer.width;
         map[QStringLiteral("height")]    = layer.height;
@@ -305,6 +307,7 @@ void SprayMapLayers::_loaded()
     _layers.append(result.layer);
     _save();
     emit layersChanged();
+    emit layerAdded(static_cast<int>(_layers.count() - 1));
 }
 
 QString SprayMapLayers::_folder() const

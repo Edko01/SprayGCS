@@ -103,6 +103,20 @@ Item {
         return Math.abs(sum) / 2
     }
 
+    // Fits the map to a field image (a layer from SprayMapLayers).
+    function _showLayer(layer) {
+        if (!map || !layer) {
+            return
+        }
+        var region = QtPositioning.rectangle(QtPositioning.coordinate(layer.north, layer.west),
+                                             QtPositioning.coordinate(layer.south, layer.east))
+        if (typeof map.setVisibleRegion === "function") {
+            map.setVisibleRegion(region)
+        } else {
+            map.visibleRegion = region
+        }
+    }
+
     function _distanceText(meters) {
         return QGroundControl.unitsConversion.metersToAppSettingsHorizontalDistanceUnitsString(meters, 0)
     }
@@ -299,8 +313,9 @@ Item {
                 Layout.fillWidth: true
                 wrapMode:         Text.WordWrap
                 font.pointSize:   ScreenTools.smallFontPointSize
-                text:             qsTr("Orthomosaics (GeoTIFF) from your mapping software, shown under the plan here and in Fly.")
-                visible:          !_root._mapLayers || _root._mapLayers.layers.length === 0
+                text:             _root._mapLayers && _root._mapLayers.layers.length > 0
+                                  ? qsTr("Tap an image's name to go to it.")
+                                  : qsTr("Orthomosaics (GeoTIFF) from your mapping software, shown under the plan here and in Fly.")
             }
             // The model is the count, so moving a slider doesn't rebuild the rows.
             Repeater {
@@ -327,6 +342,13 @@ Item {
                             Layout.fillWidth: true
                             text:             layerRow._layer ? layerRow._layer.name : ""
                             elide:            Text.ElideMiddle
+                            font.underline:   true
+
+                            // Tap the name to go to the image.
+                            MouseArea {
+                                anchors.fill: parent
+                                onClicked:    _root._showLayer(layerRow._layer)
+                            }
                         }
                         QGCButton {
                             text:      qsTr("Remove")
@@ -363,6 +385,12 @@ Item {
             _root._mapLayers.addGeoTiff(file)
             close()
         }
+    }
+
+    // A newly added image is shown at once: it may be far from where the map is.
+    Connections {
+        target: _root._mapLayers
+        function onLayerAdded(index) { _root._showLayer(_root._mapLayers.layers[index]) }
     }
 
     // Field images on this map, under the plan.

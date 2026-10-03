@@ -14,7 +14,7 @@ class SprayMapLayers : public QObject
 {
     Q_OBJECT
 
-    /// One map per layer: name, url (the map copy), north, west (top-left corner),
+    /// One map per layer: name, url (the map copy), north, south, east, west,
     /// width, height (pixels), zoomLevel (where the copy shows at natural size),
     /// visible, opacity.
     Q_PROPERTY(QVariantList layers  READ layers  NOTIFY layersChanged)
@@ -60,6 +60,8 @@ public:
 signals:
     void layersChanged();
     void loadingChanged();
+    /// A GeoTIFF was read and added as layer `index` (the maps can show it).
+    void layerAdded(int index);
 
 private:
     void _loaded();
