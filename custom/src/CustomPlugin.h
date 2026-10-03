@@ -131,6 +131,7 @@ private:
     mutable class SprayMapLayers *_mapLayers = nullptr;     ///< made when a map first asks
     QQmlApplicationEngine *_qmlEngine = nullptr;
     class CustomOverrideInterceptor *_urlInterceptor = nullptr;
+    class SprayNetworkCacheFactory *_networkFactory = nullptr;   ///< QML's network access, through a disk cache
 };
 
 /*===========================================================================*/

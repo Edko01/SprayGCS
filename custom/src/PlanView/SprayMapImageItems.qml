@@ -8,9 +8,10 @@ import QGroundControl
 /// the field, route and drone. Used by the Plan and Fly maps.
 ///
 /// Each image has an overview, drawn when zoomed out, and map tiles down to the
-/// photo's own detail: zoomed in past the overview, the tiles in view at the
-/// map's zoom level are drawn over it (made as the map moves, dropped when
-/// they leave the view).
+/// photo's own detail: zoomed in past the overview, the tiles in and around
+/// the view at the map's zoom level are drawn over it (made as the map moves,
+/// dropped when they're well out of view). When the zoom level changes, the
+/// last level's tiles stay until the new ones have loaded.
 Item {
     id: _root
 
@@ -54,15 +55,31 @@ Item {
             readonly property bool tileMode:  !!layerData && layerData.visible && layerData.tileMaxLevel >= 0
                                               && _root._zoom > layerData.zoomLevel
             property var  _overview: null
-            property var  _tiles:    ({})   // "level/x/y" -> tile map item
-            property int  pending:   0      // tiles still loading
+            property var  _tiles:    ({})   // "level/x/y" -> tile map item, at _level
+            property var  _oldTiles: ({})   // the previous level's, until _tiles have loaded
+            property int  _level:    -1
+            property int  pending:   0      // of _tiles, still loading
+
+            function _destroyAll(tiles) {
+                for (var key in tiles) {
+                    tiles[key].destroy()
+                }
+            }
 
             function clearTiles() {
-                for (var key in _tiles) {
-                    _tiles[key].destroy()
-                }
+                _destroyAll(_tiles)
+                _destroyAll(_oldTiles)
                 _tiles = {}
+                _oldTiles = {}
+                _level = -1
                 pending = 0
+            }
+
+            onPendingChanged: {
+                if (pending === 0) {
+                    _destroyAll(_oldTiles)
+                    _oldTiles = {}
+                }
             }
 
             function updateTiles() {
@@ -72,8 +89,21 @@ Item {
                     return
                 }
                 var level = Math.max(layerData.tileMinLevel, Math.min(layerData.tileMaxLevel, Math.ceil(m.zoomLevel - 0.25)))
-                var corners = [ m.toCoordinate(Qt.point(0, 0), false), m.toCoordinate(Qt.point(m.width, 0), false),
-                                m.toCoordinate(Qt.point(0, m.height), false), m.toCoordinate(Qt.point(m.width, m.height), false) ]
+                if (level !== _level) {
+                    // The current tiles stay under the new level's until those have loaded.
+                    _destroyAll(_oldTiles)
+                    for (var oldKey in _tiles) {
+                        _tiles[oldKey].retire()
+                    }
+                    _oldTiles = _tiles
+                    _tiles = {}
+                    _level = level
+                    pending = 0
+                }
+                // The view and half a screen around it, so panning finds tiles ready.
+                var mx = m.width / 2, my = m.height / 2
+                var corners = [ m.toCoordinate(Qt.point(-mx, -my), false), m.toCoordinate(Qt.point(m.width + mx, -my), false),
+                                m.toCoordinate(Qt.point(-mx, m.height + my), false), m.toCoordinate(Qt.point(m.width + mx, m.height + my), false) ]
                 var north = -90, south = 90, west = 180, east = -180
                 for (var i = 0; i < corners.length; i++) {
                     if (!corners[i].isValid) {
@@ -84,7 +114,7 @@ Item {
                     west  = Math.min(west,  corners[i].longitude)
                     east  = Math.max(east,  corners[i].longitude)
                 }
-                var wanted = _root._manager.tilesInView(index, level, north, south, west, east, 400)
+                var wanted = _root._manager.tilesInView(index, level, north, south, west, east, 600)
                 var keep = {}
                 for (var j = 0; j < wanted.length; j++) {
                     var tile = wanted[j]
@@ -106,6 +136,10 @@ Item {
                         _tiles[key].destroy()
                         delete _tiles[key]
                     }
+                }
+                if (pending === 0) {
+                    _destroyAll(_oldTiles)
+                    _oldTiles = {}
                 }
             }
 
@@ -180,6 +214,12 @@ Item {
             property var  layerDelegate
             property url  source
             property bool _settled: false
+            property bool _retired: false   // a previous zoom level's tile, kept until the new ones load
+
+            function retire() {
+                settle()
+                _retired = true
+            }
 
             function settle() {
                 if (!_settled) {
@@ -194,7 +234,7 @@ Item {
             anchorPoint.y: 0
             opacity:       layerDelegate && layerDelegate.layerData ? layerDelegate.layerData.opacity : 1
             visible:       !!layerDelegate && layerDelegate.tileMode
-            z:             2
+            z:             _retired ? 2 : 3
 
             sourceItem: Image {
                 // One pixel of overlap hides hairline seams between tiles at in-between zooms.
@@ -202,7 +242,7 @@ Item {
                 height:       257
                 source:       tileItem.source
                 asynchronous: true
-                cache:        false
+                cache:        true    // panning or zooming back reuses tiles already loaded
                 smooth:       true
 
                 onStatusChanged: {

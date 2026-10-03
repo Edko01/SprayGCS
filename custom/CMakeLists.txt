@@ -239,6 +239,8 @@ set(CUSTOM_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/FlyView/SprayBatteryBar.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Map/SprayMapLayers.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/Map/SprayMapLayers.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Map/SprayNetworkCache.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/Map/SprayNetworkCache.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/AutoPilotPlugin/CustomAutoPilotPlugin.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/AutoPilotPlugin/CustomAutoPilotPlugin.h
     ${CMAKE_CURRENT_SOURCE_DIR}/src/FirmwarePlugin/CustomFirmwarePlugin.cc

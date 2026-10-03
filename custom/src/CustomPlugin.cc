@@ -5,6 +5,7 @@
 #include "SprayAreaComplexItem.h"
 #include "FlyView/SprayBatteryBar.h"
 #include "Map/SprayMapLayers.h"
+#include "Map/SprayNetworkCache.h"
 #include "SprayAreaPlanCreator.h"
 #include "MissionController.h"
 #include "PlanMasterController.h"
@@ -349,6 +350,10 @@ QQmlApplicationEngine* CustomPlugin::createQmlApplicationEngine(QObject* parent)
     _urlInterceptor = new CustomOverrideInterceptor();
     _qmlEngine->addUrlInterceptor(_urlInterceptor);
 
+    // Field image tiles from the internet are kept on disk once seen.
+    _networkFactory = new SprayNetworkCacheFactory();
+    _qmlEngine->setNetworkAccessManagerFactory(_networkFactory);
+
     return _qmlEngine;
 }
 
@@ -362,6 +367,10 @@ void CustomPlugin::destroyQmlApplicationEngine(QQmlApplicationEngine *qmlEngine)
     }
 
     QGCCorePlugin::destroyQmlApplicationEngine(qmlEngine);
+
+    // After the engine: it uses the factory until it's gone.
+    delete _networkFactory;
+    _networkFactory = nullptr;
 }
 
 /*===========================================================================*/
