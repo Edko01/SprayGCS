@@ -526,7 +526,7 @@ void SprayMapLayers::_loaded()
 {
     emit loadingChanged();
     emit progressChanged();
-    if (_watcher.isCanceled() || _watcher.resultCount() == 0) {
+    if (_watcher.isCanceled() || _watcher.future().resultCount() == 0) {
         return;
     }
     const LoadResult result = _watcher.result();
