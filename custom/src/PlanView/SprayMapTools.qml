@@ -355,6 +355,14 @@ Item {
                             onClicked: _root._mapLayers.removeLayer(layerRow.index)
                         }
                     }
+                    // A tile link loads from the internet until it's saved here.
+                    QGCButton {
+                        Layout.fillWidth: true
+                        text:             qsTr("Save Offline")
+                        visible:          !!layerRow._layer && layerRow._layer.remote && !layerRow._layer.offline
+                        enabled:          !_root._mapLayers.loading
+                        onClicked:        _root._mapLayers.saveOffline(layerRow.index)
+                    }
                     QGCSlider {
                         Layout.fillWidth: true
                         from:             0.1
@@ -365,13 +373,29 @@ Item {
                     }
                 }
             }
+            QGCLabel {
+                Layout.fillWidth: true
+                text:             qsTr("%1... %2%").arg(_root._mapLayers ? _root._mapLayers.busyText : "").arg(_root._mapLayers ? _root._mapLayers.progress : 0)
+                visible:          !!_root._mapLayers && _root._mapLayers.loading
+                font.bold:        true
+            }
             QGCButton {
                 Layout.fillWidth: true
-                text:             _root._mapLayers && _root._mapLayers.loading
-                                  ? qsTr("Making map tiles... %1%").arg(_root._mapLayers.progress)
-                                  : qsTr("Add Field Image (GeoTIFF)")
+                text:             qsTr("Add Field Image (GeoTIFF)")
                 enabled:          !!_root._mapLayers && !_root._mapLayers.loading
                 onClicked:        geoTiffDialog.openForLoad()
+            }
+            // Map tiles hosted on GitHub.
+            QGCTextField {
+                id:               tileLinkField
+                Layout.fillWidth: true
+                placeholderText:  qsTr("GitHub tile link with {z}/{x}/{y}")
+            }
+            QGCButton {
+                Layout.fillWidth: true
+                text:             qsTr("Add Tile Link")
+                enabled:          !!_root._mapLayers && !_root._mapLayers.loading && tileLinkField.text.trim() !== ""
+                onClicked:        _root._mapLayers.addTileUrl(tileLinkField.text)
             }
         }
     }
@@ -392,7 +416,10 @@ Item {
     // A newly added image is shown at once: it may be far from where the map is.
     Connections {
         target: _root._mapLayers
-        function onLayerAdded(index) { _root._showLayer(_root._mapLayers.layers[index]) }
+        function onLayerAdded(index) {
+            tileLinkField.text = ""
+            _root._showLayer(_root._mapLayers.layers[index])
+        }
     }
 
     // Field images on this map, under the plan.

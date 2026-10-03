@@ -21,8 +21,14 @@
 #include <QtGui/QImageReader>
 #include <QtGui/QPainter>
 #include <QtGui/QTransform>
+#include <QtNetwork/QNetworkAccessManager>
+#include <QtNetwork/QNetworkReply>
+#include <QtNetwork/QNetworkRequest>
+#include <QtCore/QRegularExpression>
+#include <QtCore/QSaveFile>
 
 #include <algorithm>
+#include <climits>
 #include <cmath>
 
 QGC_LOGGING_CATEGORY(SprayMapLayersLog, "Custom.SprayMapLayers")
@@ -35,6 +41,7 @@ constexpr int    TileSize       = 256;      // also QGC's map tiles: the world i
 constexpr int    MaxTileLevel   = 22;       // about 2 cm per pixel
 constexpr qint64 MaxTopTiles    = 40000;    // at the most detailed level; beyond it the level drops
 constexpr int    JpegQuality    = 85;
+constexpr int    MaxDownloads   = 6;        // Save Offline: tiles fetched at once
 #if defined(Q_OS_ANDROID) || defined(Q_OS_IOS)
 constexpr qint64 DecodeBudgetMB = 384;      // largest image decoded at once
 #else
@@ -134,6 +141,7 @@ quint64 SprayMapLayers::tileKey(int level, int x, int y)
 
 SprayMapLayers::SprayMapLayers(QObject *parent)
     : QObject(parent)
+    , _network(new QNetworkAccessManager(this))
 {
     (void) connect(&_watcher, &QFutureWatcher<LoadResult>::finished, this, &SprayMapLayers::_loaded);
     (void) connect(&_watcher, &QFutureWatcher<LoadResult>::progressValueChanged, this, &SprayMapLayers::progressChanged);
@@ -153,7 +161,8 @@ QVariantList SprayMapLayers::layers() const
     for (const Layer &layer : _layers) {
         QVariantMap map;
         map[QStringLiteral("name")]         = layer.name;
-        map[QStringLiteral("url")]          = QUrl::fromLocalFile(_imagePath(layer));   // a QUrl: the folder name can have spaces
+        // A QUrl: the folder name can have spaces. Link layers have no overview.
+        map[QStringLiteral("url")]          = layer.width > 0 ? QUrl::fromLocalFile(_imagePath(layer)) : QUrl();
         map[QStringLiteral("north")]        = layer.north;
         map[QStringLiteral("south")]        = layer.south;
         map[QStringLiteral("east")]         = layer.east;
@@ -165,6 +174,8 @@ QVariantList SprayMapLayers::layers() const
         map[QStringLiteral("tileMaxLevel")] = layer.tiles ? layer.tileMaxLevel : -1;
         map[QStringLiteral("visible")]      = layer.visible;
         map[QStringLiteral("opacity")]      = layer.opacity;
+        map[QStringLiteral("remote")]       = !layer.urlTemplate.isEmpty();
+        map[QStringLiteral("offline")]      = layer.offline;
         list.append(map);
     }
     return list;
@@ -197,7 +208,16 @@ QVariantList SprayMapLayers::tilesInView(int index, int level, double north, dou
             }
             QVariantMap tile;
             tile[QStringLiteral("key")]   = QStringLiteral("%1/%2/%3").arg(level).arg(x).arg(y);
-            tile[QStringLiteral("url")]   = QUrl::fromLocalFile(_tilePath(layer, level, x, y, it.value()));
+            // Link layers: the saved copy if there is one, else from the link.
+            const QString path = _tilePath(layer, level, x, y, it.value());
+            if (layer.urlTemplate.isEmpty() || QFile::exists(path)) {
+                tile[QStringLiteral("url")] = QUrl::fromLocalFile(path);
+            } else {
+                tile[QStringLiteral("url")] = QUrl(QString(layer.urlTemplate)
+                                                       .replace(QStringLiteral("{z}"), QString::number(level))
+                                                       .replace(QStringLiteral("{x}"), QString::number(x))
+                                                       .replace(QStringLiteral("{y}"), QString::number(y)));
+            }
             tile[QStringLiteral("north")] = wm::latFromY(y / tiles);
             tile[QStringLiteral("west")]  = wm::lonFromX(x / tiles);
             list.append(tile);
@@ -208,19 +228,252 @@ QVariantList SprayMapLayers::tilesInView(int index, int level, double north, dou
 
 void SprayMapLayers::addGeoTiff(const QString &path)
 {
-    if (_watcher.isRunning()) {
-        QGC::showAppMessage(tr("Still reading the last image. Add this one when it's on the map."));
+    if (loading()) {
+        QGC::showAppMessage(tr("Still working on the last layer. Add this one when it's done."));
         return;
     }
+    _setBusy(tr("Making map tiles"));
     _watcher.setFuture(QtConcurrent::run(&SprayMapLayers::loadGeoTiff, path, _folder()));
-    emit loadingChanged();
     emit progressChanged();
+}
+
+void SprayMapLayers::addTileUrl(const QString &urlTemplate)
+{
+    if (loading()) {
+        QGC::showAppMessage(tr("Still working on the last layer. Add this one when it's done."));
+        return;
+    }
+    // https://raw.githubusercontent.com/<owner>/<repo>/<branch>/<path with {z}/{x}/{y}>
+    static const QRegularExpression github(QStringLiteral("^https://raw\\.githubusercontent\\.com/([^/]+)/([^/]+)/([^/]+)/(.+)$"));
+    const QString link = urlTemplate.trimmed();
+    const QRegularExpressionMatch match = github.match(link);
+    if (!match.hasMatch() || !link.contains(QStringLiteral("{z}")) || !link.contains(QStringLiteral("{x}"))
+        || !link.contains(QStringLiteral("{y}"))) {
+        QGC::showAppMessage(tr("Paste a GitHub tile link with {z}, {x} and {y} in it, like "
+                               "https://raw.githubusercontent.com/you/repo/main/{z}/{x}/{y}.png"));
+        return;
+    }
+    const QString owner        = match.captured(1);
+    const QString repo         = match.captured(2);
+    const QString branch       = match.captured(3);
+    const QString pathTemplate = match.captured(4);
+
+    // Which files in the repository are tiles: the path with {z}, {x}, {y} as numbers.
+    QString pattern = QRegularExpression::escape(pathTemplate);
+    pattern.replace(QStringLiteral("\\{z\\}"), QStringLiteral("(?<z>\\d+)"))
+           .replace(QStringLiteral("\\{x\\}"), QStringLiteral("(?<x>\\d+)"))
+           .replace(QStringLiteral("\\{y\\}"), QStringLiteral("(?<y>\\d+)"));
+    const QRegularExpression tilePath(QStringLiteral("^") + pattern + QStringLiteral("$"));
+    const bool jpeg = pathTemplate.endsWith(QStringLiteral(".jpg"), Qt::CaseInsensitive)
+                      || pathTemplate.endsWith(QStringLiteral(".jpeg"), Qt::CaseInsensitive);
+
+    QNetworkRequest request(QUrl(QStringLiteral("https://api.github.com/repos/%1/%2/git/trees/%3?recursive=1").arg(owner, repo, branch)));
+    request.setRawHeader("Accept", "application/vnd.github+json");
+    request.setRawHeader("User-Agent", "SprayGCS");
+    QNetworkReply *reply = _network->get(request);
+    _setBusy(tr("Reading the tile list"));
+    _setProgress(0);
+
+    (void) connect(reply, &QNetworkReply::finished, this, [this, reply, link, repo, tilePath, jpeg]() {
+        reply->deleteLater();
+        _setBusy(QString());
+        if (reply->error() != QNetworkReply::NoError) {
+            QGC::showAppMessage(tr("Couldn't get the tile list from GitHub (%1). Check the link and the internet connection.")
+                                    .arg(reply->errorString()));
+            return;
+        }
+        const QJsonObject tree = QJsonDocument::fromJson(reply->readAll()).object();
+        auto index = std::make_shared<TileIndex>();
+        int minLevel = MaxTileLevel + 1;
+        int maxLevel = -1;
+        for (const QJsonValue &entry : tree[QStringLiteral("tree")].toArray()) {
+            const QJsonObject file = entry.toObject();
+            if (file[QStringLiteral("type")].toString() != QStringLiteral("blob")) {
+                continue;
+            }
+            const QRegularExpressionMatch tile = tilePath.match(file[QStringLiteral("path")].toString());
+            if (!tile.hasMatch()) {
+                continue;
+            }
+            const int level = tile.captured(QStringLiteral("z")).toInt();
+            if (level < 0 || level > MaxTileLevel) {
+                continue;
+            }
+            index->insert(tileKey(level, tile.captured(QStringLiteral("x")).toInt(), tile.captured(QStringLiteral("y")).toInt()), jpeg);
+            minLevel = std::min(minLevel, level);
+            maxLevel = std::max(maxLevel, level);
+        }
+        if (index->isEmpty()) {
+            QGC::showAppMessage(tr("No tiles found at that link. Check the branch and the {z}/{x}/{y} part of the path."));
+            return;
+        }
+        if (tree[QStringLiteral("truncated")].toBool()) {
+            QGC::showAppMessage(tr("The repository is too big for GitHub to list in full; some tiles may be missing."));
+        }
+
+        // Where it is: the extent of the most detailed level.
+        int x0 = INT_MAX, y0 = INT_MAX, x1 = -1, y1 = -1;
+        for (auto it = index->constBegin(); it != index->constEnd(); ++it) {
+            if (static_cast<int>(it.key() >> 56) != maxLevel) {
+                continue;
+            }
+            const int x = static_cast<int>((it.key() >> 28) & 0xFFFFFFF);
+            const int y = static_cast<int>(it.key() & 0xFFFFFFF);
+            x0 = std::min(x0, x);
+            x1 = std::max(x1, x);
+            y0 = std::min(y0, y);
+            y1 = std::max(y1, y);
+        }
+        const double tiles = static_cast<double>(1 << maxLevel);
+
+        Layer layer;
+        layer.id           = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        layer.name         = repo;
+        layer.sourcePath   = link;
+        layer.urlTemplate  = link;
+        layer.north        = wm::latFromY(y0 / tiles);
+        layer.south        = wm::latFromY((y1 + 1) / tiles);
+        layer.west         = wm::lonFromX(x0 / tiles);
+        layer.east         = wm::lonFromX((x1 + 1) / tiles);
+        layer.zoomLevel    = minLevel - 1;   // no overview: the tiles show at every zoom level
+        layer.tileMinLevel = minLevel;
+        layer.tileMaxLevel = maxLevel;
+        layer.tiles        = index;
+        _saveIndex(layer);
+        _layers.append(layer);
+        _save();
+        emit layersChanged();
+        emit layerAdded(static_cast<int>(_layers.count() - 1));
+        QGC::showAppMessage(tr("Added %1 (%2 tiles, zoom %3 to %4). It loads from GitHub; Save Offline keeps it on this "
+                               "device for fields without internet.").arg(repo).arg(index->count()).arg(minLevel).arg(maxLevel));
+    });
+}
+
+void SprayMapLayers::saveOffline(int index)
+{
+    if (index < 0 || index >= _layers.count() || _layers[index].urlTemplate.isEmpty() || !_layers[index].tiles) {
+        return;
+    }
+    if (loading()) {
+        QGC::showAppMessage(tr("Still working on the last layer. Save this one when it's done."));
+        return;
+    }
+    const Layer &layer = _layers[index];
+    _downloadQueue.clear();
+    for (auto it = layer.tiles->constBegin(); it != layer.tiles->constEnd(); ++it) {
+        const int level = static_cast<int>(it.key() >> 56);
+        const int x = static_cast<int>((it.key() >> 28) & 0xFFFFFFF);
+        const int y = static_cast<int>(it.key() & 0xFFFFFFF);
+        if (!QFile::exists(_tilePath(layer, level, x, y, it.value()))) {
+            _downloadQueue.append(std::make_tuple(level, x, y));
+        }
+    }
+    _downloadId     = layer.id;
+    _downloadTotal  = static_cast<int>(_downloadQueue.count());
+    _downloadDone   = 0;
+    _downloadFailed = 0;
+    _inFlight       = 0;
+    _setBusy(tr("Saving tiles"));
+    _setProgress(0);
+    for (int i = 0; i < MaxDownloads; i++) {
+        _downloadNext();
+    }
+    if (_downloadTotal == 0) {
+        _downloadFinished();
+    }
+}
+
+void SprayMapLayers::_downloadNext()
+{
+    const auto layerIt = std::find_if(_layers.begin(), _layers.end(), [this](const Layer &l) { return l.id == _downloadId; });
+    if (_downloadQueue.isEmpty() || layerIt == _layers.end()) {
+        return;
+    }
+    const auto [level, x, y] = _downloadQueue.takeFirst();
+    const Layer layer = *layerIt;
+    const bool jpeg = layer.tiles->value(tileKey(level, x, y));
+    const QString path = _tilePath(layer, level, x, y, jpeg);
+    QNetworkRequest request(QUrl(QString(layer.urlTemplate)
+                                     .replace(QStringLiteral("{z}"), QString::number(level))
+                                     .replace(QStringLiteral("{x}"), QString::number(x))
+                                     .replace(QStringLiteral("{y}"), QString::number(y))));
+    request.setRawHeader("User-Agent", "SprayGCS");
+    QNetworkReply *reply = _network->get(request);
+    _inFlight++;
+
+    (void) connect(reply, &QNetworkReply::finished, this, [this, reply, path, id = layer.id]() {
+        reply->deleteLater();
+        _inFlight--;
+        if (id == _downloadId) {
+            bool saved = false;
+            if (reply->error() == QNetworkReply::NoError) {
+                (void) QDir().mkpath(QFileInfo(path).absolutePath());
+                QSaveFile file(path);
+                saved = file.open(QIODevice::WriteOnly) && file.write(reply->readAll()) >= 0 && file.commit();
+            }
+            if (!saved) {
+                _downloadFailed++;
+            }
+            _downloadDone++;
+            _setProgress(_downloadTotal > 0 ? 100 * _downloadDone / _downloadTotal : 100);
+        }
+        if (_downloadQueue.isEmpty() && _inFlight == 0) {
+            _downloadFinished();
+        } else {
+            _downloadNext();
+        }
+    });
+}
+
+void SprayMapLayers::_downloadFinished()
+{
+    const QString id = _downloadId;
+    _downloadId.clear();
+    _setBusy(QString());
+    for (Layer &layer : _layers) {
+        if (layer.id != id) {
+            continue;
+        }
+        if (_downloadFailed == 0) {
+            layer.offline = true;
+            _save();
+            emit layersChanged();
+            QGC::showAppMessage(tr("%1 is saved on this device and works without internet.").arg(layer.name));
+        } else {
+            QGC::showAppMessage(tr("%1 of %2 tiles of %3 didn't download. Tap Save Offline again to retry them.")
+                                    .arg(_downloadFailed).arg(_downloadTotal).arg(layer.name));
+        }
+    }
+}
+
+void SprayMapLayers::_setBusy(const QString &text)
+{
+    if (_busyText != text) {
+        _busyText = text;
+        emit loadingChanged();
+    }
+}
+
+void SprayMapLayers::_setProgress(int value)
+{
+    if (_progress != value) {
+        _progress = value;
+        emit progressChanged();
+    }
 }
 
 void SprayMapLayers::removeLayer(int index)
 {
     if (index < 0 || index >= _layers.count()) {
         return;
+    }
+    if (_layers[index].id == _downloadId) {
+        // Stop saving it; tiles still on their way are dropped.
+        _downloadQueue.clear();
+        _downloadId.clear();
+        if (_inFlight == 0) {
+            _setBusy(QString());
+        }
     }
     (void) QFile::remove(_imagePath(_layers[index]));
     (void) QDir(_folder() + QStringLiteral("/") + _layers[index].id).removeRecursively();
@@ -524,7 +777,7 @@ void SprayMapLayers::loadGeoTiff(QPromise<LoadResult> &promise, const QString &p
 
 void SprayMapLayers::_loaded()
 {
-    emit loadingChanged();
+    _setBusy(QString());
     emit progressChanged();
     if (_watcher.isCanceled() || _watcher.future().resultCount() == 0) {
         return;
@@ -572,6 +825,10 @@ void SprayMapLayers::_save() const
         object[QStringLiteral("zoomLevel")]  = layer.zoomLevel;
         object[QStringLiteral("visible")]    = layer.visible;
         object[QStringLiteral("opacity")]    = layer.opacity;
+        if (!layer.urlTemplate.isEmpty()) {
+            object[QStringLiteral("urlTemplate")] = layer.urlTemplate;
+            object[QStringLiteral("offline")]     = layer.offline;
+        }
         array.append(object);
     }
     QFile file(_folder() + QStringLiteral("/layers.json"));
@@ -602,8 +859,11 @@ void SprayMapLayers::_restore()
         layer.height     = object[QStringLiteral("height")].toInt();
         layer.zoomLevel  = object[QStringLiteral("zoomLevel")].toDouble();
         layer.visible    = object[QStringLiteral("visible")].toBool(true);
-        layer.opacity    = object[QStringLiteral("opacity")].toDouble(1.0);
-        if (layer.id.isEmpty() || layer.width <= 0 || layer.height <= 0 || !QFile::exists(_imagePath(layer))) {
+        layer.opacity     = object[QStringLiteral("opacity")].toDouble(1.0);
+        layer.urlTemplate = object[QStringLiteral("urlTemplate")].toString();
+        layer.offline     = object[QStringLiteral("offline")].toBool(false);
+        const bool hasOverview = layer.width > 0 && layer.height > 0 && QFile::exists(_imagePath(layer));
+        if (layer.id.isEmpty() || (layer.urlTemplate.isEmpty() && !hasOverview)) {
             continue;
         }
 
@@ -623,6 +883,22 @@ void SprayMapLayers::_restore()
                 layer.tiles        = tileIndex;
             }
         }
+        if (!layer.urlTemplate.isEmpty() && !layer.tiles) {
+            continue;   // a link layer is its tile list
+        }
         _layers.append(layer);
+    }
+}
+
+void SprayMapLayers::_saveIndex(const Layer &layer) const
+{
+    if (!layer.tiles) {
+        return;
+    }
+    const QString tileFolder = _folder() + QStringLiteral("/") + layer.id;
+    QFile file(tileFolder + QStringLiteral("/tiles.json"));
+    if (!QDir().mkpath(tileFolder) || !file.open(QIODevice::WriteOnly | QIODevice::Truncate)
+        || file.write(QJsonDocument(indexToJson(layer.tileMinLevel, layer.tileMaxLevel, *layer.tiles)).toJson(QJsonDocument::Compact)) < 0) {
+        qCWarning(SprayMapLayersLog) << "Couldn't save the tile list" << file.fileName();
     }
 }
