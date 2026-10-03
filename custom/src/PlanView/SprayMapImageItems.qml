@@ -23,7 +23,8 @@ Item {
             id: layerDelegate
 
             required property int index
-            readonly property var layer: index < _root._layers.length ? _root._layers[index] : null
+            // Not "layer": every Item has a built-in, final property of that name.
+            readonly property var layerData: index < _root._layers.length ? _root._layers[index] : null
             property var _mapItem: null
 
             Component.onCompleted: {
@@ -47,7 +48,7 @@ Item {
             id: imageItem
 
             property var layerDelegate
-            readonly property var _layer: layerDelegate ? layerDelegate.layer : null
+            readonly property var _layer: layerDelegate ? layerDelegate.layerData : null
 
             coordinate:    _layer ? QtPositioning.coordinate(_layer.north, _layer.west) : QtPositioning.coordinate()
             anchorPoint.x: 0

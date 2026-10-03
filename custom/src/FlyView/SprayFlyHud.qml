@@ -518,8 +518,9 @@ Item {
                     }
                 }
                 HudText {
+                    // On the percentage's baseline (it's inside the Row, so it can't be an anchor).
                     anchors.right:      parent.right
-                    anchors.baseline:   percentLabel.baseline
+                    y:                  percentLabel.y + percentLabel.baselineOffset - baselineOffset
                     text:               qsTr("%1 of %2 ac").arg(statusStrip._acDone.toFixed(1)).arg(statusStrip._acTotal.toFixed(1))
                     color:              _s.ink
                 }
