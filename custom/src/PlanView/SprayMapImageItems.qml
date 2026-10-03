@@ -65,6 +65,15 @@ Item {
                 cache:        false
                 smooth:       true
                 mipmap:       true
+
+                onStatusChanged: {
+                    if (status === Image.Error) {
+                        console.warn("SprayGCS field image didn't load:", source)
+                    } else if (status === Image.Ready) {
+                        console.log("SprayGCS field image loaded:", source, sourceSize.width + "x" + sourceSize.height,
+                                    "at zoom", imageItem.zoomLevel)
+                    }
+                }
             }
         }
     }

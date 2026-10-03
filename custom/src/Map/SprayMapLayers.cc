@@ -78,7 +78,7 @@ QVariantList SprayMapLayers::layers() const
     for (const Layer &layer : _layers) {
         QVariantMap map;
         map[QStringLiteral("name")]      = layer.name;
-        map[QStringLiteral("url")]       = QUrl::fromLocalFile(_imagePath(layer)).toString();
+        map[QStringLiteral("url")]       = QUrl::fromLocalFile(_imagePath(layer));   // a QUrl: the folder name can have spaces
         map[QStringLiteral("north")]     = layer.north;
         map[QStringLiteral("south")]     = layer.south;
         map[QStringLiteral("east")]      = layer.east;
