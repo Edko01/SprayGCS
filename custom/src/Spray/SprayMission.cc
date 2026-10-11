@@ -5,6 +5,77 @@
 
 namespace spray {
 
+namespace {
+
+constexpr double kPi = 3.14159265358979323846;
+
+// The landing turn: its length grows with the turn (so the drone turns at a
+// steady rate), within these limits.
+constexpr double kTurnMPerDeg  = 0.5;
+constexpr double kMinTurnM     = 15.0;
+constexpr double kMaxTurnM     = 90.0;
+constexpr double kMaxSpacingM  = 5.0;
+// Largest heading change from one waypoint to the next, well inside PX4's
+// MIS_YAW_ERR (12 degrees by default) so it never stops to finish a turn.
+constexpr double kMaxStepDeg   = 8.0;
+
+double wrap180(double deg)
+{
+    deg = std::fmod(deg + 180.0, 360.0);
+    if (deg < 0.0) {
+        deg += 360.0;
+    }
+    return deg - 180.0;
+}
+
+double wrap360(double deg)
+{
+    deg = std::fmod(deg, 360.0);
+    return deg < 0.0 ? deg + 360.0 : deg;
+}
+
+// Degrees clockwise from north, in the same flat approximation as distanceM.
+double bearingDeg(const LatLon& a, const LatLon& b)
+{
+    const double cosLat = std::cos((a.lat + b.lat) / 2.0 * kPi / 180.0);
+    return wrap360(std::atan2((b.lon - a.lon) * cosLat, b.lat - a.lat) * 180.0 / kPi);
+}
+
+} // namespace
+
+std::vector<HeadingPoint> landingTurn(const LatLon& from, const LatLon& to, double headingDeg)
+{
+    if (!std::isfinite(headingDeg)) {
+        return { { to, std::numeric_limits<double>::quiet_NaN() } };
+    }
+    const double finalDeg = wrap360(headingDeg);
+    const double legM     = distanceM(from, to);
+    if (legM < kMinTurnM) {
+        return { { to, finalDeg } };
+    }
+    const double courseDeg = bearingDeg(from, to);
+    const double turnDeg   = wrap180(finalDeg - courseDeg);   // the short way round
+    const double absTurn   = std::fabs(turnDeg);
+    if (absTurn < 0.5) {
+        return { { to, finalDeg } };
+    }
+
+    const double turnM = std::min(legM, std::clamp(absTurn * kTurnMPerDeg, kMinTurnM, kMaxTurnM));
+    // Smoothstep eases the turn in and out; its steepest step is 1.5x the average.
+    const int count = static_cast<int>(std::max(std::ceil(turnM / kMaxSpacingM), std::ceil(1.5 * absTurn / kMaxStepDeg)));
+
+    std::vector<HeadingPoint> points;
+    points.reserve(static_cast<size_t>(count));
+    for (int i = 1; i <= count; ++i) {
+        const double t    = static_cast<double>(i) / count;
+        const double ease = t * t * (3.0 - 2.0 * t);
+        const double f    = (legM - turnM * (1.0 - t)) / legM;   // of the way from `from` to `to`
+        const LatLon p    = i == count ? to : LatLon { from.lat + (to.lat - from.lat) * f, from.lon + (to.lon - from.lon) * f };
+        points.push_back({ p, i == count ? finalDeg : wrap360(courseDeg + turnDeg * ease) });
+    }
+    return points;
+}
+
 std::vector<PlanStep> buildMission(const MissionInput& in)
 {
     std::vector<PlanStep> steps;
@@ -21,22 +92,45 @@ std::vector<PlanStep> buildMission(const MissionInput& in)
         s.speedMS = metresPerSecond;
         steps.push_back(s);
     };
-    // Transit waypoint; skips an exact repeat of the previous waypoint.
-    auto wp = [&](const LatLon& p, double alt) {
+    auto lastWaypoint = [&]() -> const PlanStep* {
         for (auto it = steps.rbegin(); it != steps.rend(); ++it) {
             if (it->kind == PlanStep::Waypoint) {
-                if (distanceM(it->pos, p) < 0.05 && std::fabs(it->altM - alt) < 0.01) {
-                    return;
-                }
-                break;
+                return &*it;
             }
+        }
+        return nullptr;
+    };
+    // Transit waypoint; skips an exact repeat of the previous waypoint.
+    auto wp = [&](const LatLon& p, double alt, double yawDeg = std::numeric_limits<double>::quiet_NaN()) {
+        if (const PlanStep* last = lastWaypoint(); last && distanceM(last->pos, p) < 0.05 && std::fabs(last->altM - alt) < 0.01) {
+            return;
         }
         PlanStep s;
         s.kind    = PlanStep::Waypoint;
         s.pos     = p;
         s.altM    = alt;
         s.transit = true;
+        s.yawDeg  = yawDeg;
         steps.push_back(s);
+    };
+    // The last leg, to over the takeoff point, ending with the turn to the
+    // landing heading.
+    auto home = [&](double alt) {
+        if (!std::isfinite(in.landingHeadingDeg)) {
+            wp(in.takeoff, alt);
+            return;
+        }
+        // Already over takeoff (e.g. taking off inside the field): the turn
+        // goes on the leg there instead.
+        if (!steps.empty() && steps.back().kind == PlanStep::Waypoint && distanceM(steps.back().pos, in.takeoff) < 0.05
+            && std::fabs(steps.back().altM - alt) < 0.01) {
+            steps.pop_back();
+        }
+        const PlanStep* last = lastWaypoint();
+        const LatLon    from = last ? last->pos : in.takeoff;
+        for (const HeadingPoint& h : landingTurn(from, in.takeoff, in.landingHeadingDeg)) {
+            wp(h.pos, alt, h.yawDeg);
+        }
     };
     auto landStart = [&]() {
         PlanStep s;
@@ -112,7 +206,7 @@ std::vector<PlanStep> buildMission(const MissionInput& in)
         landStart();                    // Return: straight to the exit, then home
         speed(in.transitSpeedMS);
         wp(exitTo, transitAlt);
-        wp(in.takeoff, transitAlt);
+        home(transitAlt);
         return steps;
     }
 
@@ -146,7 +240,7 @@ std::vector<PlanStep> buildMission(const MissionInput& in)
     for (size_t i = in.transitRoute.size() - 1; i-- > 0;) {
         wp(in.transitRoute[i], transitAlt);
     }
-    wp(in.takeoff, transitAlt);
+    home(transitAlt);
     return steps;
 }
 

@@ -26,12 +26,17 @@
 // instead leaves through the entry side nearest the drone (see
 // SprayAreaComplexItem::returnViaEntrySide).
 //
+// Landing heading: given the heading the drone took off facing, the last leg
+// home ends with waypoints that ease the drone round to it (see landingTurn),
+// so it arrives over the takeoff point, and lands, facing the way it took off.
+//
 // Heights are above ground. PX4 missions hold them relative to the takeoff
 // point; following the terrain is left to the onboard app. Transit is never
 // flown lower than spray height. Legs flown at spray height stay inside the
 // spray area (away from the field edge).
 // The pump is only on along spray sections of the route; never in transit.
 
+#include <limits>
 #include <vector>
 
 #include "SprayPathGenerator.h"
@@ -53,6 +58,8 @@ struct MissionInput {
     double              transitSpeedMS = 8.0;
     std::vector<int>    gateSides;          // Gate mode: allowed entry/exit sides; empty = side nearest takeoff
     std::vector<LatLon> transitRoute;       // Route mode: points after takeoff; last = entry point
+    // Degrees clockwise from north to land facing (the takeoff heading); NaN = any.
+    double              landingHeadingDeg = std::numeric_limits<double>::quiet_NaN();
 };
 
 struct PlanStep {
@@ -62,9 +69,24 @@ struct PlanStep {
     double altM     = 0.0;    // Waypoint, above ground
     double speedMS  = 0.0;    // Speed
     bool   transit  = false;  // Waypoint belongs to a transit leg (for display)
+    double yawDeg   = std::numeric_limits<double>::quiet_NaN();   // Waypoint heading to fly at; NaN = facing the way it flies
 };
 
 std::vector<PlanStep> buildMission(const MissionInput& input);
+
+struct HeadingPoint {
+    LatLon pos;
+    double yawDeg = std::numeric_limits<double>::quiet_NaN();   // clockwise from north, 0..360
+};
+// The end of the leg `from` -> `to` as waypoints that turn the drone smoothly
+// from facing along the leg to `headingDeg`, reached on arrival at `to` (the
+// last point). The turn eases in and out over the last 15-90 m of the leg
+// (longer for a bigger turn), turning the short way. Each waypoint turns the
+// drone so little that PX4 passes it without stopping to yaw (it waits at a
+// waypoint until within MIS_YAW_ERR, 12 degrees by default, of its heading).
+// A non-finite heading gives just `to` (heading NaN); a leg too short to ease
+// the turn gives just `to` at the heading (the drone finishes turning there).
+std::vector<HeadingPoint> landingTurn(const LatLon& from, const LatLon& to, double headingDeg);
 
 // Mode A's way back from `from` (e.g. a Return mid-job), mirroring the way in:
 // inside the field to the point of the allowed sides best for `from`, across

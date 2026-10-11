@@ -3,6 +3,7 @@
 #include "AppMessages.h"
 #include "AppSettings.h"
 #include "CustomPlugin.h"
+#include "FactGroup.h"
 #include "FirmwarePlugin.h"
 #include "JsonParsing.h"
 #include "MissionFlightStatus.h"
@@ -494,6 +495,7 @@ void SprayAreaComplexItem::_rebuildMission()
         in.transitSpeedMS = _transitSpeedFact.rawValue().toDouble();
         in.gateSides      = std::vector<int>(_resolvedGateSides.cbegin(), _resolvedGateSides.cend());
         in.transitRoute   = _effectiveTransitRoute();
+        in.landingHeadingDeg = _landingHeading;
 
         _missionSteps = spray::buildMission(in);
         _missionStats = spray::missionStats(_missionSteps);
@@ -509,11 +511,13 @@ void SprayAreaComplexItem::_rebuildMission()
         }
 
         // Legs flown in transit, for the map: from takeoff, and every leg
-        // that starts or ends at a transit waypoint.
-        QGeoCoordinate prev        = takeoff ? home : QGeoCoordinate();
-        bool           prevTransit = true;
+        // that starts or ends at a transit waypoint. The landing turn's
+        // waypoints only split the last leg, so they're left out.
+        const spray::PlanStep *lastStep    = _missionSteps.empty() ? nullptr : &_missionSteps.back();
+        QGeoCoordinate         prev        = takeoff ? home : QGeoCoordinate();
+        bool                   prevTransit = true;
         for (const auto &s : _missionSteps) {
-            if (s.kind != spray::PlanStep::Waypoint) {
+            if (s.kind != spray::PlanStep::Waypoint || (std::isfinite(s.yawDeg) && &s != lastStep)) {
                 continue;
             }
             const QGeoCoordinate c(s.pos.lat, s.pos.lon);
@@ -1414,6 +1418,17 @@ void SprayAreaComplexItem::_trackVehicle(Vehicle *vehicle)
     _trackConnections << connect(vehicle, &Vehicle::flightModeChanged, this, update);
     update();
 
+    // Land facing the way the drone took off: follow its heading on the ground.
+    if (FactGroup *group = vehicle->vehicleFactGroup()) {
+        if (Fact *heading = group->getFact(QStringLiteral("heading"))) {
+            _trackConnections << connect(heading, &Fact::rawValueChanged, this, &SprayAreaComplexItem::_updateLandingHeading);
+        }
+        _trackConnections << connect(group, &FactGroup::telemetryAvailableChanged, this, &SprayAreaComplexItem::_updateLandingHeading);
+    }
+    _trackConnections << connect(vehicle, &Vehicle::armedChanged,  this, &SprayAreaComplexItem::_updateLandingHeading);
+    _trackConnections << connect(vehicle, &Vehicle::flyingChanged, this, &SprayAreaComplexItem::_updateLandingHeading);
+    _updateLandingHeading();
+
     // Each upload of the plan sets the drone's Return to suit its transit mode.
     // After an upload in the air (e.g. paused to change a setting), carry on
     // from where the drone was.
@@ -1424,6 +1439,32 @@ void SprayAreaComplexItem::_trackVehicle(Vehicle *vehicle)
             _continueAfterUpload(_trackedVehicle.data());
         }
     });
+}
+
+void SprayAreaComplexItem::_updateLandingHeading()
+{
+    // On the ground and disarmed, it faces the way it'll take off. (Spinning
+    // motors can upset the compass, so not once armed.) In the air, the
+    // heading from before takeoff stays, for uploads during the flight.
+    Vehicle   *vehicle = _trackedVehicle.data();
+    FactGroup *group   = vehicle ? vehicle->vehicleFactGroup() : nullptr;
+    if (!vehicle || vehicle->armed() || vehicle->flying() || !group || !group->telemetryAvailable()) {
+        return;
+    }
+    const Fact  *heading = group->getFact(QStringLiteral("heading"));
+    const double deg     = heading ? heading->rawValue().toDouble() : qQNaN();
+    if (!std::isfinite(deg)
+        || (std::isfinite(_landingHeading) && qAbs(std::remainder(deg - _landingHeading, 360.0)) < kLandingHeadingChangeDeg)) {
+        return;
+    }
+    const int oldLastSeq = lastSequenceNumber();
+    _landingHeading = std::fmod(std::fmod(deg, 360.0) + 360.0, 360.0);
+    qCDebug(SprayAreaLog) << "landing heading" << _landingHeading;
+    _rebuildMission();
+    _emitMissionChanged(oldLastSeq);
+    if (hasTakeoff()) {
+        setDirty(true);   // the drone's mission lands facing the old way: upload again
+    }
 }
 
 void SprayAreaComplexItem::_setReturnedMidJob(bool returned)
@@ -2037,9 +2078,9 @@ QString SprayAreaComplexItem::returnViaEntrySide()
     const double nan = std::numeric_limits<double>::quiet_NaN();
     QList<MissionItem *> items;
     int seq = 0;
-    auto waypoint = [&](const spray::LatLon &p, double alt) {
+    auto waypoint = [&](const spray::LatLon &p, double alt, double yawDeg = std::numeric_limits<double>::quiet_NaN()) {
         items.append(new MissionItem(seq++, MAV_CMD_NAV_WAYPOINT, MAV_FRAME_GLOBAL_RELATIVE_ALT,
-                                     0, 0, 0, nan, p.lat, p.lon, alt, true, false, owner));
+                                     0, 0, 0, yawDeg, p.lat, p.lon, alt, true, false, owner));
     };
     waypoint(homeLL, 0);   // home (not sent to PX4)
     // A failsafe Return during this flight carries on along it.
@@ -2049,8 +2090,14 @@ QString SprayAreaComplexItem::returnViaEntrySide()
     items.append(new MissionItem(seq++, MAV_CMD_DO_CHANGE_SPEED, MAV_FRAME_MISSION,
                                  1, _transitSpeedFact.rawValue().toDouble(), -1, 0, 0, 0, 0, true, false, owner));
     waypoint(hereLL, transitAlt);   // climb where it is
-    for (const auto &p : path) {
-        waypoint(p, transitAlt);    // ... the last one over takeoff
+    spray::LatLon from = hereLL;
+    for (size_t i = 0; i + 1 < path.size(); ++i) {
+        waypoint(path[i], transitAlt);
+        from = path[i];
+    }
+    // The last leg, to over takeoff, ends turning to the takeoff heading.
+    for (const spray::HeadingPoint &h : spray::landingTurn(from, path.back(), _landingHeading)) {
+        waypoint(h.pos, transitAlt, h.yawDeg);
     }
     items.append(new MissionItem(seq++, MAV_CMD_NAV_LAND, MAV_FRAME_GLOBAL_RELATIVE_ALT,
                                  0, 0, 0, nan, homeLL.lat, homeLL.lon, 0, true, false, owner));
@@ -2351,7 +2398,7 @@ void SprayAreaComplexItem::appendMissionItems(QList<MissionItem *> &items,
                 0,      // hold time
                 0.0,    // acceptance radius (default)
                 0.0,    // pass through
-                nan,    // yaw: unchanged
+                step.yawDeg,   // heading (the landing turn); NaN: facing the way it flies
                 step.pos.lat,
                 step.pos.lon,
                 step.altM,
@@ -2479,6 +2526,9 @@ void SprayAreaComplexItem::save(QJsonArray &missionItems)
     if (hasTakeoff()) {
         const QGeoCoordinate home = takeoffPoint();
         saveObject[_jsonTakeoffKey] = QJsonArray { home.latitude(), home.longitude() };
+    }
+    if (std::isfinite(_landingHeading)) {
+        saveObject[_jsonLandingHeadingKey] = _landingHeading;
     }
 
     // Resuming a job: what's already sprayed, and where the drone was waiting.
@@ -2741,6 +2791,8 @@ bool SprayAreaComplexItem::load(const QJsonObject &complexObject,
             }
         }
         _transitRouteCustom = complexObject[_jsonTransitCustomKey].toBool(false) && !_transitRoute.empty();
+        const QJsonValue landingHeading = complexObject[_jsonLandingHeadingKey];
+        _landingHeading = landingHeading.isDouble() ? landingHeading.toDouble() : qQNaN();
         _rebuildMission();
         _emitMissionChanged(oldLastSeq);
     }
@@ -2749,5 +2801,6 @@ bool SprayAreaComplexItem::load(const QJsonObject &complexObject,
     setDirty(false);
     _resetUndoHistory();   // undo doesn't reach back past opening the plan
     setBoundaryEditMode(_fieldPolygon.count() < 3);   // a loaded field opens locked
+    _updateLandingHeading();   // the drone on the ground now may face another way
     return true;
 }
