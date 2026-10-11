@@ -411,7 +411,6 @@ private:
     void _makeTransitRouteCustom();
     void _rebuildSprayedVariant();
     void _trackVehicle(Vehicle *vehicle);   ///< remember where the drone left Mission mode
-    void _updateLandingHeading();           ///< the drone on the ground: the way it'll take off (and land) facing
     int  _resumeStartSeq() const;           ///< plan sequence number of the route's first waypoint
     void _applyReturnSettings(Vehicle *vehicle);   ///< after an upload: the drone's Return to suit this plan
     QString _markSprayed(Vehicle *vehicle);        ///< markSprayedFromDrone() without the paused check
@@ -463,7 +462,6 @@ private:
     std::vector<spray::LatLon>    _transitRoute;            ///< mode B, points after takeoff (last = entry)
     bool                          _transitRouteCustom = false;
     bool                          _transitEntryInside = true;
-    double                        _landingHeading = qQNaN();   ///< degrees from north the drone took off facing; NaN = not known
     std::vector<spray::PlanStep>  _missionSteps;
     spray::MissionStats           _missionStats;
     QVariantList                  _gateLinesVariant;
@@ -555,7 +553,6 @@ private:
     static constexpr const char *_jsonTransitRouteKey    = "transitRoute";   ///< [[lat, lon], ...] after takeoff
     static constexpr const char *_jsonTransitCustomKey   = "transitRouteCustom";
     static constexpr const char *_jsonTakeoffKey         = "takeoff";        ///< [lat, lon] for the onboard app
-    static constexpr const char *_jsonLandingHeadingKey  = "landingHeading"; ///< degrees from north to land facing (the takeoff heading)
     static constexpr const char *_jsonSprayedKey         = "sprayed";        ///< [[latA, lonA, latB, lonB, widthM], ...] already sprayed
     static constexpr const char *_jsonResumeFromKey      = "resumeFrom";     ///< [lat, lon]: route starts at the waiting drone
     static constexpr const char *_jsonBreakpointKey      = "breakpoint";     ///< {strips, stop, reason, time}: where spraying stopped
@@ -563,6 +560,4 @@ private:
 
     static constexpr double      kMinBufferM             = 0.9144;           ///< 3 ft
     static constexpr double      kMaxBufferM             = 50.0;
-    /// The drone turned on the ground by more than this (degrees): plan the landing for its new heading.
-    static constexpr double      kLandingHeadingChangeDeg = 5.0;
 };

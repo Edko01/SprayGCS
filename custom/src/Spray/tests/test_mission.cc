@@ -52,8 +52,7 @@ static void commonChecks(const MissionInput& in, const std::vector<PlanStep>& st
     for (auto& w : wps) path.push_back(w.pos);
     auto out = legsOutside(in.boundary, path);
     for (size_t i = 0; i < out.size(); i++) {
-        // The landing turn's waypoints split the last leg.
-        const bool firstOrLast = i == 0 || i + 1 == out.size() || std::isfinite(wps[i + 1].yawDeg);
+        const bool firstOrLast = i == 0 || i + 1 == out.size();
         if (out[i] && !(takeoffOutside && firstOrLast) && in.transit == TransitMode::Gate) {
             CHECK(false, "leg %zu leaves the field (%.1f,%.1f)->(%.1f,%.1f)", i,
                   xOf(path[i]), yOf(path[i]), xOf(path[i + 1]), yOf(path[i + 1]));
@@ -332,85 +331,6 @@ int main()
         // Outside the field (in transit): straight home.
         auto outside = gateReturnPath(rect, left, takeoff, at(-20, 10));
         CHECK(outside.size() == 1 && distanceM(outside[0], takeoff) < 0.01, "outside: straight to takeoff");
-    }
-
-    std::printf("landing turn: eases round to the takeoff heading on the last stretch of the leg\n");
-    {
-        auto turnDelta = [](double a, double b) { double d = std::fmod(b - a + 540.0, 360.0) - 180.0; return d; };
-        struct Case { double headingDeg; double legM; double courseDeg; };
-        // Flying north (course 0) or north-west-ish (350), landing facing various ways.
-        for (Case c : { Case { 90, 300, 0 }, Case { 270, 300, 0 }, Case { 180, 300, 0 }, Case { 180, 60, 0 },
-                        Case { 10, 300, 350 }, Case { 45, 30, 0 }, Case { 5, 200, 0 }, Case { -90, 300, 0 } }) {
-            const double r = c.courseDeg * M_PI / 180.0;
-            const LatLon to = at(20, 30);
-            const LatLon from = at(20 - c.legM * std::sin(r), 30 - c.legM * std::cos(r));
-            auto pts = landingTurn(from, to, c.headingDeg);
-            const double finalDeg = std::fmod(c.headingDeg + 360.0, 360.0);
-            const double turn = turnDelta(c.courseDeg, finalDeg);
-            CHECK(!pts.empty() && distanceM(pts.back().pos, to) < 1e-6 && std::fabs(pts.back().yawDeg - finalDeg) < 1e-9,
-                  "heading %.0f: should end at the point facing %.0f, got %.2f", c.headingDeg, finalDeg, pts.empty() ? -1.0 : pts.back().yawDeg);
-            double prevYaw = c.courseDeg, prevDist = c.legM, maxStep = 0, maxGap = 0;
-            for (const auto& p : pts) {
-                // On the leg, in order, within its last 90 m.
-                const double fromStart = distanceM(from, p.pos), toEnd = distanceM(p.pos, to);
-                CHECK(std::fabs(fromStart + toEnd - c.legM) < 0.01, "heading %.0f: point off the leg", c.headingDeg);
-                CHECK(toEnd < prevDist && toEnd <= 90.01, "heading %.0f: points out of order or too early (%.1f m out)", c.headingDeg, toEnd);
-                const double step = turnDelta(prevYaw, p.yawDeg);
-                CHECK(step * turn >= -1e-9, "heading %.0f: turns the long way or back (step %.2f)", c.headingDeg, step);
-                CHECK(p.yawDeg >= 0 && p.yawDeg < 360, "heading %.0f: yaw %.2f out of 0..360", c.headingDeg, p.yawDeg);
-                maxStep = std::max(maxStep, std::fabs(step));
-                if (&p != &pts.front()) maxGap = std::max(maxGap, prevDist - toEnd);
-                prevYaw = p.yawDeg;
-                prevDist = toEnd;
-            }
-            if (pts.size() > 1) {
-                CHECK(maxStep <= 8.0 + 1e-9, "heading %.0f: a %.2f degree step would make PX4 stop to turn", c.headingDeg, maxStep);
-                CHECK(maxGap <= 5.0 + 1e-6, "heading %.0f: %.2f m between turn points", c.headingDeg, maxGap);
-                const double turnStartM = distanceM(pts.front().pos, to) + maxGap;   // a gap before the first point
-                CHECK(turnStartM >= 15.0 - 0.01, "heading %.0f: turn starts only %.1f m out", c.headingDeg, turnStartM);
-            }
-            std::printf("  course %3.0f -> %4.0f over a %3.0f m leg: %zu points, largest step %.1f deg\n",
-                        c.courseDeg, c.headingDeg, c.legM, pts.size(), maxStep);
-        }
-        // Already facing the right way, a short leg, or no heading: just the point.
-        auto straight = landingTurn(at(20, -270), at(20, 30), 0);
-        CHECK(straight.size() == 1 && straight[0].yawDeg == 0, "no turn needed: one point");
-        auto shortLeg = landingTurn(at(20, 25), at(20, 30), 90);
-        CHECK(shortLeg.size() == 1 && shortLeg[0].yawDeg == 90, "short leg: one point at the heading");
-        auto none = landingTurn(at(20, -270), at(20, 30), std::nan(""));
-        CHECK(none.size() == 1 && std::isnan(none[0].yawDeg), "no heading: one point, any heading");
-    }
-
-    std::printf("landing heading in the mission: only the end of the last leg has headings\n");
-    {
-        for (TransitMode mode : { TransitMode::Gate, TransitMode::Route }) {
-            for (LatLon takeoff : { at(50, -140), at(50, 30) }) {   // outside and inside the field
-                MissionInput in; in.boundary = rect; in.route = route; in.transit = mode;
-                in.takeoff = takeoff; in.transitAltM = 12; in.sprayAltM = 3;
-                if (mode == TransitMode::Route) in.transitRoute = { at(50, -60), at(50, 5) };
-                const auto plain = buildMission(in);
-                for (const auto& w : waypoints(plain)) CHECK(std::isnan(w.yawDeg), "mode %d: no landing heading, but a waypoint has one", int(mode));
-
-                in.landingHeadingDeg = 200;
-                const auto steps = buildMission(in);
-                const auto wps = waypoints(steps);
-                CHECK(distanceM(wps.back().pos, takeoff) < 0.01 && wps.back().altM == 12 && wps.back().yawDeg == 200,
-                      "mode %d: should end over takeoff facing 200, got %.1f", int(mode), wps.back().yawDeg);
-                CHECK(wps.size() < 2 || distanceM(wps[wps.size() - 2].pos, takeoff) > 0.05, "mode %d: takeoff point repeated", int(mode));
-                size_t firstYaw = wps.size();
-                for (size_t i = 0; i < wps.size(); ++i) if (std::isfinite(wps[i].yawDeg)) { firstYaw = i; break; }
-                CHECK(firstYaw > 0 && firstYaw < wps.size(), "mode %d: turn points", int(mode));
-                for (size_t i = firstYaw; i < wps.size(); ++i) {
-                    CHECK(std::isfinite(wps[i].yawDeg) && wps[i].transit && wps[i].altM == 12, "mode %d: turn point %zu", int(mode), i);
-                }
-                // Same path, only split up.
-                CHECK(std::fabs(missionStats(steps).distanceM - missionStats(plain).distanceM) < 0.05, "mode %d: path length changed", int(mode));
-                commonChecks(in, steps, !pointInPolygon(rect, takeoff));
-                std::printf("  mode %d, takeoff %s: %zu turn points\n", int(mode), pointInPolygon(rect, takeoff) ? "inside" : "outside", wps.size() - firstYaw);
-            }
-        }
-        MissionInput none; none.boundary = rect; none.route = route; none.transit = TransitMode::None; none.landingHeadingDeg = 90;
-        for (const auto& w : waypoints(buildMission(none))) CHECK(std::isnan(w.yawDeg), "no transit: no landing turn");
     }
 
     std::printf("helpers\n");
