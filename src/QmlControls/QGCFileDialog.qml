@@ -17,6 +17,7 @@ Item {
     property string title
     property bool   selectFolder:   false
     property string defaultSuffix:  ""
+    property string defaultFileName: ""  ///< SprayGCS: starting text of the in-app picker's "New file name"
 
     signal acceptedForLoad(string file)
     signal acceptedForSave(string file)
@@ -279,6 +280,7 @@ Item {
                     QGCTextField {
                         id:                 filenameTextField
                         Layout.fillWidth:   true
+                        text:               _root.defaultFileName
                         onTextChanged:      replaceMessage.visible = false
                     }
                 }

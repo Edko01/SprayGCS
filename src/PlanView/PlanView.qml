@@ -133,6 +133,24 @@ Item {
             fileDialog.openForLoad()
         }
 
+        // SprayGCS: a new file is named after the field (the Spray Area's field
+        // name), else after the plan's current file; characters a file name
+        // can't have become "-".
+        function suggestedFileName() {
+            var name = ""
+            for (var i = 0; i < _visualItems.count; i++) {
+                var item = _visualItems.get(i)
+                if (item && item.isSprayArea === true) {
+                    name = item.fieldName
+                    break
+                }
+            }
+            if (!name) {
+                name = _planMasterController.currentPlanFileName
+            }
+            return name ? name.replace(/[\\\/:*?"<>|]/g, "-").trim() : ""
+        }
+
         function saveToSelectedFile() {
             if (!checkReadyForSaveUpload(true /* save */)) {
                 return
@@ -140,6 +158,7 @@ Item {
             fileDialog.title =          qsTr("Save Plan")
             fileDialog.planFiles =      true
             fileDialog.nameFilters =    _planMasterController.saveNameFilters
+            fileDialog.defaultFileName = suggestedFileName()
             fileDialog.openForSave()
         }
 
@@ -154,6 +173,7 @@ Item {
             fileDialog.title =          qsTr("Save KML")
             fileDialog.planFiles =      false
             fileDialog.nameFilters =    ShapeFileHelper.fileDialogKMLFilters
+            fileDialog.defaultFileName = suggestedFileName()
             fileDialog.openForSave()
         }
     }
